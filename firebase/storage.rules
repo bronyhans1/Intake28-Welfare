@@ -1,0 +1,147 @@
+rules_version = '2';
+
+/**
+ * Production Storage security rules — GIS Intake 28 Welfare Portal
+ *
+ * Paths (inspected):
+ *   profile-photos/{IS####}/profile.webp
+ *   claims/{memberId}/{claimId}/{file}
+ *   constitution/{versionKey}.{ext}
+ *   announcements/*  — no client writes (unused for uploads)
+ *   receipts/*       — no client writes/deletes (Admin SDK / API only)
+ *
+ * Ownership and roles are resolved from Firestore users/{auth.uid} using
+ * the official Cloud Storage cross-service API:
+ *   firestore.exists(path)
+ *   firestore.get(path).data.<field>
+ *
+ * Do not use firestore.get(...).exists — that property is not defined on the
+ * Resource returned by firestore.get() in Storage rules (simulator error:
+ * "Property exists is undefined on object").
+ *
+ * Custom upload metadata is never trusted for authorization.
+ */
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/(default)/documents/users/$(request.auth.uid);
+    }
+
+    function userExists() {
+      return firestore.exists(userPath());
+    }
+
+    function userData() {
+      return firestore.get(userPath()).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && userExists()
+        && userData().role == 'admin';
+    }
+
+    function isAdminOrTreasurer() {
+      return isSignedIn()
+        && userExists()
+        && userData().role in ['admin', 'treasurer'];
+    }
+
+    /**
+     * Folder key matches sanitizeStorageServiceNumber():
+     * serviceNumber "IS/13984" / suffix "13984" → "IS13984"
+     * Bound to Firestore serviceNumberSuffix — not upload metadata.
+     */
+    function expectedPhotoFolder() {
+      return 'IS' + userData().serviceNumberSuffix;
+    }
+
+    function ownsPhotoFolder(folder) {
+      return isSignedIn()
+        && userExists()
+        && 'serviceNumberSuffix' in userData()
+        && folder == expectedPhotoFolder()
+        && folder.matches('IS[0-9]+');
+    }
+
+    function isClaimOwner(memberId) {
+      return isSignedIn() && request.auth.uid == memberId;
+    }
+
+    function claimContentTypeAllowed() {
+      return request.resource.contentType in [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/webp',
+        'application/pdf'
+      ];
+    }
+
+    function constitutionContentTypeAllowed() {
+      return request.resource.contentType in [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ];
+    }
+
+    // profile-photos/{IS####}/profile.webp
+    match /profile-photos/{folder}/{fileName} {
+      allow read: if ownsPhotoFolder(folder) || isAdminOrTreasurer();
+
+      allow write: if ownsPhotoFolder(folder)
+        && fileName == 'profile.webp'
+        && request.resource.size < 5 * 1024 * 1024
+        && request.resource.contentType == 'image/webp';
+
+      // Owner may remove prior jpg/png/webp after a successful webp upload
+      allow delete: if ownsPhotoFolder(folder)
+        && fileName.matches('profile\\.(jpg|jpeg|png|webp)');
+    }
+
+    // claims/{memberId}/{claimId}/{file} — actual client path
+    match /claims/{memberId}/{claimId}/{fileName} {
+      allow read: if isClaimOwner(memberId) || isAdminOrTreasurer();
+
+      allow create, update: if isClaimOwner(memberId)
+        && request.resource.size < 5 * 1024 * 1024
+        && claimContentTypeAllowed();
+
+      // App does not delete claim attachments from the client today
+      allow delete: if false;
+    }
+
+    // constitution/{versionKey}.{ext} — admin upload only; members may read
+    match /constitution/{fileName} {
+      allow read: if isSignedIn();
+
+      allow write: if isAdmin()
+        && request.resource.size < 15 * 1024 * 1024
+        && constitutionContentTypeAllowed();
+
+      allow delete: if isAdmin();
+    }
+
+    // announcements — unused for client uploads; deny writes
+    match /announcements/{fileName} {
+      allow read: if false;
+      allow write, delete: if false;
+    }
+
+    // receipts — Admin SDK / API generated only
+    match /receipts/{year}/{fileName} {
+      allow read: if false;
+      allow write, delete: if false;
+    }
+
+    // Unknown paths: deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
