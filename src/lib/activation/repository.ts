@@ -1,6 +1,5 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { COLLECTIONS } from "@/lib/constants";
-import { getAdminDb } from "@/lib/firebase/admin";
 import { phoneNumbersMatch } from "@/lib/utils/phone";
 import { ActivationStatus } from "@/types/enums";
 import type { ProfileCompletionSnapshot } from "@/types/user";
@@ -14,6 +13,7 @@ function mapFirestoreUser(
 }
 
 export async function findUserById(userId: string): Promise<User | null> {
+  const { getAdminDb } = await import("@/lib/firebase/admin");
   const db = getAdminDb();
   const doc = await db.collection(COLLECTIONS.USERS).doc(userId).get();
 
@@ -27,6 +27,7 @@ export async function findUserById(userId: string): Promise<User | null> {
 export async function findUserByServiceNumber(
   serviceNumber: string,
 ): Promise<User | null> {
+  const { getAdminDb } = await import("@/lib/firebase/admin");
   const db = getAdminDb();
   const snapshot = await db
     .collection(COLLECTIONS.USERS)
@@ -70,6 +71,7 @@ export async function updateUserOtpTracking(
   userId: string,
   update: OtpTrackingUpdate,
 ): Promise<void> {
+  const { getAdminDb } = await import("@/lib/firebase/admin");
   const db = getAdminDb();
   const payload: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
@@ -102,6 +104,7 @@ export async function activateUserRecord(
   userId: string,
   profileSnapshot: ProfileCompletionSnapshot,
 ): Promise<void> {
+  const { getAdminDb } = await import("@/lib/firebase/admin");
   const db = getAdminDb();
 
   await db
