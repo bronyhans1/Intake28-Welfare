@@ -31,7 +31,7 @@ export interface ProgressionCalculationInput {
   memberId: string;
   /** Paid monthly-dues periods and related contribution rows */
   contributions: ProgressionContributionInput[];
-  /** Membership start (activatedAt preferred, else createdAt) */
+  /** Membership start (activatedAt preferred, else createdAt) — used for outstanding obligations */
   membershipStart: ContributionMonthKey;
   /** Calculation as-of period (usually current Africa/Accra month) */
   asOf: ContributionMonthKey;
@@ -148,8 +148,9 @@ function isPaidMonthlyDues(row: ProgressionContributionInput): boolean {
 
 /**
  * Pure progression calculator — no I/O.
- * One welfare point per unique paid monthly-dues period.
- * DEFAULTING / LAPSED use outstandingContributionMonths.
+ * One welfare point per unique paid monthly-dues Contribution Month
+ * (period fields year/month), regardless of registration or entry date.
+ * DEFAULTING / LAPSED use outstandingContributionMonths (join → asOf).
  */
 export function calculateProgressionFromContributions(
   input: ProgressionCalculationInput,
@@ -171,11 +172,12 @@ export function calculateProgressionFromContributions(
     }
   }
 
-  // Unique successful months only from membership start through asOf
+  // Unique successful Contribution Months: award points for each paid period
+  // through asOf (including months before membership start / activation).
+  // Do not award points for periods after asOf. Deduped by year-month key.
   const successfulKeys: string[] = [];
   for (const key of paidByMonth.keys()) {
     const period = parseMonthKey(key);
-    if (compareMonthKeys(period, input.membershipStart) < 0) continue;
     if (compareMonthKeys(period, input.asOf) > 0) continue;
     successfulKeys.push(key);
   }

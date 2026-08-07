@@ -10,6 +10,7 @@ import {
   canManageContributions,
   canViewContributions,
   createContribution,
+  findPaidMonthlyDuesContribution,
   getContributionById,
   listContributions,
   reverseContribution,
@@ -126,6 +127,41 @@ export async function fetchMonthlyDuesAmount() {
     return { success: true as const, data: await getMonthlyDuesAmount() };
   } catch {
     return { error: "Failed to load monthly dues configuration." };
+  }
+}
+
+/**
+ * Whether the member already has a paid monthly-dues contribution for the
+ * selected Contribution Month (admin Record Contribution UX).
+ */
+export async function checkPaidMonthlyDuesMonthAction(
+  memberId: string,
+  month: number,
+  year: number,
+): Promise<{ exists: boolean } | ContributionsActionState> {
+  const access = await requireManageAccess();
+  if (!isActor(access)) return access;
+
+  if (
+    !memberId.trim() ||
+    !Number.isInteger(month) ||
+    month < 1 ||
+    month > 12 ||
+    !Number.isInteger(year) ||
+    year < 2020
+  ) {
+    return { error: "Invalid contribution month." };
+  }
+
+  try {
+    const existing = await findPaidMonthlyDuesContribution(
+      memberId.trim(),
+      month,
+      year,
+    );
+    return { exists: Boolean(existing) };
+  } catch {
+    return { error: "Failed to check contribution month." };
   }
 }
 

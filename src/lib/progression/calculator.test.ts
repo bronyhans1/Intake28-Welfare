@@ -226,4 +226,39 @@ describe("calculateProgressionFromContributions", () => {
 
     expect(result.maturityDate).toBe("2026-06-01T00:00:00.000Z");
   });
+
+  it("awards welfare points for Contribution Months before membership start", () => {
+    // e.g. July dues recorded in August after activation — point uses July period
+    const result = calculateProgressionFromContributions({
+      memberId: "m1",
+      membershipStart: { year: 2026, month: 8 },
+      asOf: { year: 2026, month: 8 },
+      defaulterThresholdMonths: 2,
+      contributions: [
+        dues(2026, 7, "2026-08-10T12:00:00.000Z"),
+        dues(2026, 8, "2026-08-10T12:00:00.000Z"),
+        dues(2026, 7, "2026-08-11T12:00:00.000Z"), // duplicate July — one point only
+      ],
+    });
+
+    expect(result.welfarePoints).toBe(2);
+    expect(result.successfulContributionMonths).toBe(2);
+    expect(result.benefitPercentage).toBe(0);
+    expect(result.isMature).toBe(false);
+    // Outstanding obligations still start at membership start (August), not July
+    expect(result.outstandingContributionMonths).toBe(0);
+    expect(result.outstandingMonths).toEqual([]);
+  });
+
+  it("does not award welfare points for Contribution Months after asOf", () => {
+    const result = calculateProgressionFromContributions({
+      memberId: "m1",
+      membershipStart: { year: 2026, month: 1 },
+      asOf: { year: 2026, month: 6 },
+      defaulterThresholdMonths: 2,
+      contributions: [dues(2026, 6), dues(2026, 7)],
+    });
+
+    expect(result.welfarePoints).toBe(1);
+  });
 });
