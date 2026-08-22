@@ -18,7 +18,7 @@ describe("sendHubtelSms", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts to smsc.hubtel.com with Basic Auth and lowercase JSON body", async () => {
+  it("posts to smsc.hubtel.com with query-parameter credentials", async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       text: async () => JSON.stringify({ messageId: "msg-123" }),
@@ -30,21 +30,20 @@ describe("sendHubtelSms", () => {
     expect(result.messageId).toBe("msg-123");
 
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("https://smsc.hubtel.com/v1/messages/send");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toBeUndefined();
+    expect(init.body).toBeUndefined();
 
-    const headers = init.headers as Record<string, string>;
-    expect(headers.Authorization).toMatch(/^Basic /);
-    expect(headers.Authorization).not.toContain("client-secret");
-    expect(headers["Content-Type"]).toBe("application/json");
-
-    const body = JSON.parse(String(init.body));
-    expect(body).toEqual({
-      from: "GISINT28",
-      to: "+233241234567",
-      content: OTP_MESSAGE,
-    });
-    expect(body.content).toMatch(/\d{6}/);
-    expect(body.content).not.toMatch(/client-secret|client-id/);
+    const parsed = new URL(url);
+    expect(parsed.origin + parsed.pathname).toBe(
+      "https://smsc.hubtel.com/v1/messages/send",
+    );
+    expect(parsed.searchParams.get("clientid")).toBe("client-id");
+    expect(parsed.searchParams.get("clientsecret")).toBe("client-secret");
+    expect(parsed.searchParams.get("from")).toBe("GISINT28");
+    expect(parsed.searchParams.get("to")).toBe("+233241234567");
+    expect(parsed.searchParams.get("content")).toBe(OTP_MESSAGE);
+    expect(parsed.searchParams.get("content")).toMatch(/\d{6}/);
   });
 
   it("accepts legacy PascalCase messageId in success responses", async () => {
@@ -57,7 +56,7 @@ describe("sendHubtelSms", () => {
     expect(result.messageId).toBe("msg-legacy");
   });
 
-  it("returns failure on HTTP error without throwing", async () => {
+  it("returns failure on HTTP error without logging credentials", async () => {
     const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     mockFetch.mockResolvedValue({
@@ -70,6 +69,7 @@ describe("sendHubtelSms", () => {
     const result = await sendHubtelSms("0241234567", OTP_MESSAGE);
     expect(result.sent).toBe(false);
     expect(result.error).toBe("http_400");
+
     expect(consoleSpy).toHaveBeenCalledWith(
       "[hubtel:sms] HTTP error",
       expect.objectContaining({
@@ -77,6 +77,13 @@ describe("sendHubtelSms", () => {
         responseBody: expect.stringContaining("Invalid sender"),
       }),
     );
+
+    const logged = JSON.stringify(consoleSpy.mock.calls);
+    expect(logged).not.toContain("client-secret");
+    expect(logged).not.toContain("client-id");
+    expect(logged).not.toContain("654321");
+    expect(logged).not.toContain("+233241234567");
+    expect(logged).not.toContain("smsc.hubtel.com/v1/messages/send?");
 
     consoleSpy.mockRestore();
   });
