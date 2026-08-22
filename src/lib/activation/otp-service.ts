@@ -11,6 +11,7 @@ import {
   verifyOtpCode,
 } from "@/lib/activation/otp-store";
 import { updateActivationContext } from "@/lib/activation/session";
+import { sendOtpSms } from "@/lib/notifications/otp-sms";
 import {
   computeOtpFailedAttemptUpdate,
   computeOtpSentUpdate,
@@ -19,26 +20,6 @@ import {
   isOtpLocked,
 } from "@/lib/utils/activation-otp";
 import type { ActivationContext, OtpDeliveryStatus } from "@/types/activation";
-
-function logDevOtp(userId: string, serviceNumber: string): void {
-  if (process.env.NODE_ENV === "development") {
-    console.info(
-      `[activation:otp:dev] Check server logs for OTP — userId=${userId} serviceNumber=${serviceNumber}`,
-    );
-  }
-}
-
-function logDevOtpCode(
-  userId: string,
-  serviceNumber: string,
-  otp: string,
-): void {
-  if (process.env.NODE_ENV === "development") {
-    console.info(
-      `[activation:otp:dev] OTP for ${serviceNumber} (userId=${userId}): ${otp}`,
-    );
-  }
-}
 
 function mapEligibilityToStatus(
   eligibility: ReturnType<typeof evaluateOtpRequestEligibility>,
@@ -80,10 +61,13 @@ export async function sendActivationOtp(
     return mapEligibilityToStatus(eligibility);
   }
 
-  if (!options?.forceResend && hasActiveOtpCode(context.userId)) {
+  if (!options?.forceResend && (await hasActiveOtpCode(context.userId))) {
     return {
       sent: true,
-      message: "A verification code has already been sent. Check your server logs in development.",
+      message:
+        process.env.NODE_ENV === "development"
+          ? "A verification code has already been sent. Check your server terminal for the OTP."
+          : "A verification code has already been sent to your registered phone number.",
     };
   }
 
@@ -91,28 +75,40 @@ export async function sendActivationOtp(
   const now = new Date();
   const sentUpdate = computeOtpSentUpdate(user.activationOtpSentCount, now);
 
-  storeOtpCode(context.userId, otp, now);
+  await storeOtpCode(context.userId, otp, now);
   await updateUserOtpTracking(context.userId, {
     lastOtpSentAt: sentUpdate.lastOtpSentAt,
     activationOtpSentCount: sentUpdate.activationOtpSentCount,
   });
 
-  logDevOtpCode(context.userId, context.serviceNumber, otp);
-  logDevOtp(context.userId, context.serviceNumber);
+  const smsResult = await sendOtpSms(context.phoneNumber, otp, {
+    memberId: context.userId,
+    serviceNumber: context.serviceNumber,
+    purpose: "activation",
+  });
+
+  if (!smsResult.sent) {
+    return {
+      sent: false,
+      message:
+        smsResult.message ??
+        "Unable to send verification code. Please try again later.",
+    };
+  }
 
   await logActivationAuditEvent({
     action: "activation_validation_success",
     userId: context.userId,
     serviceNumber: context.serviceNumber,
-    metadata: { event: "otp_sent", provider: "development" },
+    metadata: {
+      event: "otp_sent",
+      provider: smsResult.provider,
+    },
   });
 
   return {
     sent: true,
-    message:
-      process.env.NODE_ENV === "development"
-        ? "Verification code sent. Check the server terminal for the OTP."
-        : "Verification code sent to your registered phone number.",
+    message: smsResult.message,
   };
 }
 
@@ -154,13 +150,13 @@ export async function verifyActivationOtp(
               user.otpLockedUntil !== null &&
               "toDate" in user.otpLockedUntil
               ? (user.otpLockedUntil as { toDate(): Date }).toDate()
-              : user.otpLockedUntil as unknown as Date,
+              : (user.otpLockedUntil as unknown as Date),
           ).toISOString()
         : undefined,
     };
   }
 
-  const isValid = verifyOtpCode(context.userId, otp);
+  const isValid = await verifyOtpCode(context.userId, otp);
 
   if (!isValid) {
     const failedUpdate = computeOtpFailedAttemptUpdate(user.otpAttempts);
@@ -181,7 +177,7 @@ export async function verifyActivationOtp(
     });
 
     if (failedUpdate.isLocked) {
-      clearOtpCode(context.userId);
+      await clearOtpCode(context.userId);
       return {
         success: false,
         error:
@@ -203,7 +199,7 @@ export async function verifyActivationOtp(
     otpLockedUntil: reset.otpLockedUntil,
   });
 
-  clearOtpCode(context.userId);
+  await clearOtpCode(context.userId);
   await updateActivationContext({ ...context, step: "password" });
 
   await logActivationAuditEvent({

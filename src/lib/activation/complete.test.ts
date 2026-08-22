@@ -7,6 +7,7 @@ const mockUpdateUser = vi.fn();
 const mockGetUser = vi.fn();
 const mockFindUserById = vi.fn();
 const mockActivateUserRecord = vi.fn();
+const mockUpdateUserOtpTracking = vi.fn();
 
 vi.mock("@/lib/firebase/admin", () => ({
   getAdminAuth: () => ({
@@ -19,6 +20,8 @@ vi.mock("@/lib/firebase/admin", () => ({
 vi.mock("@/lib/activation/repository", () => ({
   findUserById: (...args: unknown[]) => mockFindUserById(...args),
   activateUserRecord: (...args: unknown[]) => mockActivateUserRecord(...args),
+  updateUserOtpTracking: (...args: unknown[]) =>
+    mockUpdateUserOtpTracking(...args),
 }));
 
 import {
@@ -123,6 +126,7 @@ describe("completeMemberActivation", () => {
     mockGetUser.mockRejectedValue({ code: "auth/user-not-found" });
     mockCreateUser.mockResolvedValue({ uid: "user-1" });
     mockActivateUserRecord.mockResolvedValue(undefined);
+    mockUpdateUserOtpTracking.mockResolvedValue(undefined);
   });
 
   it("creates Firebase Auth user and updates Firestore activation fields", async () => {

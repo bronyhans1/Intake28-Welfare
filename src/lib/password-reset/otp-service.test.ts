@@ -10,6 +10,7 @@ import { ACTIVATION_OTP } from "@/lib/constants/activation-otp";
 const mockFindUserById = vi.fn();
 const mockUpdatePasswordResetOtpTracking = vi.fn();
 const mockUpdatePasswordResetContext = vi.fn();
+const mockSendOtpSms = vi.fn();
 
 vi.mock("@/lib/activation/repository", () => ({
   findUserById: (...args: unknown[]) => mockFindUserById(...args),
@@ -23,6 +24,10 @@ vi.mock("@/lib/password-reset/repository", () => ({
 vi.mock("@/lib/password-reset/session", () => ({
   updatePasswordResetContext: (...args: unknown[]) =>
     mockUpdatePasswordResetContext(...args),
+}));
+
+vi.mock("@/lib/notifications/otp-sms", () => ({
+  sendOtpSms: (...args: unknown[]) => mockSendOtpSms(...args),
 }));
 
 import {
@@ -69,9 +74,14 @@ describe("password reset OTP service", () => {
     mockFindUserById.mockResolvedValue(baseUser);
     mockUpdatePasswordResetOtpTracking.mockResolvedValue(undefined);
     mockUpdatePasswordResetContext.mockResolvedValue(undefined);
+    mockSendOtpSms.mockResolvedValue({
+      sent: true,
+      provider: "development",
+      message: "Verification code sent.",
+    });
   });
 
-  it("sends OTP and stores hashed code", async () => {
+  it("sends OTP, stores hashed code, and calls sendOtpSms", async () => {
     const result = await sendPasswordResetOtp(context);
 
     expect(result.sent).toBe(true);
@@ -82,6 +92,30 @@ describe("password reset OTP service", () => {
         passwordResetOtpExpiresAt: expect.any(Date),
       }),
     );
+
+    const storedHash = mockUpdatePasswordResetOtpTracking.mock.calls[0][1]
+      .passwordResetOtp as string;
+    expect(storedHash).not.toBe("123456");
+
+    expect(mockSendOtpSms).toHaveBeenCalledWith(
+      "0241234567",
+      expect.any(String),
+      expect.objectContaining({
+        memberId: "user-1",
+        purpose: "password_reset",
+      }),
+    );
+  });
+
+  it("returns failure when SMS send fails", async () => {
+    mockSendOtpSms.mockResolvedValue({
+      sent: false,
+      provider: "hubtel",
+      message: "Unable to send verification code. Please try again later.",
+    });
+
+    const result = await sendPasswordResetOtp(context);
+    expect(result.sent).toBe(false);
   });
 
   it("verifies a valid OTP and advances the session", async () => {

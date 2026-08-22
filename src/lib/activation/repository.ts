@@ -64,6 +64,8 @@ export interface OtpTrackingUpdate {
   otpAttempts?: number;
   otpLockedUntil?: Date | null;
   activationOtpSentCount?: number;
+  activationOtp?: string | null;
+  activationOtpExpiresAt?: Date | null;
 }
 
 export async function updateUserOtpTracking(
@@ -95,6 +97,16 @@ export async function updateUserOtpTracking(
     payload.activationOtpSentCount = update.activationOtpSentCount;
   }
 
+  if (update.activationOtp !== undefined) {
+    payload.activationOtp = update.activationOtp;
+  }
+
+  if (update.activationOtpExpiresAt !== undefined) {
+    payload.activationOtpExpiresAt = update.activationOtpExpiresAt
+      ? Timestamp.fromDate(update.activationOtpExpiresAt)
+      : null;
+  }
+
   await db.collection(COLLECTIONS.USERS).doc(userId).update(payload);
 }
 
@@ -114,6 +126,8 @@ export async function activateUserRecord(
       profileCompletionPercentage: profileSnapshot.profileCompletionPercentage,
       otpAttempts: 0,
       otpLockedUntil: null,
+      activationOtp: null,
+      activationOtpExpiresAt: null,
       updatedAt: FieldValue.serverTimestamp(),
     });
 }

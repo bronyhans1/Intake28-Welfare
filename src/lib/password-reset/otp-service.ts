@@ -1,4 +1,5 @@
 import { findUserById } from "@/lib/activation/repository";
+import { sendOtpSms } from "@/lib/notifications/otp-sms";
 import { updatePasswordResetOtpTracking } from "@/lib/password-reset/repository";
 import {
   generatePasswordResetOtpCode,
@@ -23,26 +24,6 @@ import type {
   PasswordResetOtpVerificationResult,
 } from "@/types/password-reset";
 import type { User } from "@/types/user";
-
-function logDevOtp(userId: string, serviceNumber: string): void {
-  if (process.env.NODE_ENV === "development") {
-    console.info(
-      `[password-reset:otp:dev] Check server logs for OTP — userId=${userId} serviceNumber=${serviceNumber}`,
-    );
-  }
-}
-
-function logDevOtpCode(
-  userId: string,
-  serviceNumber: string,
-  otp: string,
-): void {
-  if (process.env.NODE_ENV === "development") {
-    console.info(
-      `[password-reset:otp:dev] OTP for ${serviceNumber} (userId=${userId}): ${otp}`,
-    );
-  }
-}
 
 function mapEligibilityToStatus(
   eligibility: ReturnType<typeof evaluatePasswordResetOtpRequestEligibility>,
@@ -102,7 +83,9 @@ export async function sendPasswordResetOtp(
     return {
       sent: true,
       message:
-        "A verification code has already been sent. Check your server logs in development.",
+        process.env.NODE_ENV === "development"
+          ? "A verification code has already been sent. Check your server terminal for the OTP."
+          : "A verification code has already been sent to your registered phone number.",
     };
   }
 
@@ -118,15 +101,24 @@ export async function sendPasswordResetOtp(
     passwordResetRequestedAt: sentUpdate.passwordResetRequestedAt,
   });
 
-  logDevOtpCode(context.userId, context.serviceNumber, otp);
-  logDevOtp(context.userId, context.serviceNumber);
+  const smsResult = await sendOtpSms(context.phoneNumber, otp, {
+    memberId: context.userId,
+    serviceNumber: context.serviceNumber,
+    purpose: "password_reset",
+  });
+
+  if (!smsResult.sent) {
+    return {
+      sent: false,
+      message:
+        smsResult.message ??
+        "Unable to send verification code. Please try again later.",
+    };
+  }
 
   return {
     sent: true,
-    message:
-      process.env.NODE_ENV === "development"
-        ? "Verification code sent. Check the server terminal for the OTP."
-        : "Verification code sent to your registered phone number.",
+    message: smsResult.message,
   };
 }
 

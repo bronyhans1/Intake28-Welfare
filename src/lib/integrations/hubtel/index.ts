@@ -12,3 +12,4 @@ export {
   isHubtelConfigured,
   type HubtelConfig,
 } from "@/lib/integrations/hubtel/config";
+export { sendHubtelSms, type HubtelSmsResult } from "@/lib/integrations/hubtel/sms";

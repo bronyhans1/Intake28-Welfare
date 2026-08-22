@@ -1,99 +1,103 @@
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
-import { ACTIVATION_OTP } from "@/lib/constants/activation-otp";
+import { findUserById, updateUserOtpTracking } from "@/lib/activation/repository";
+import {
+  generateOtpCode,
+  getActivationOtpExpiry,
+  hashActivationOtp,
+  isActivationOtpExpired,
+  verifyActivationOtpHash,
+} from "@/lib/activation/otp";
+import type { User } from "@/types/user";
 
-interface StoredOtp {
-  hash: string;
-  expiresAt: number;
-}
+export { generateOtpCode };
 
-const otpStore = new Map<string, StoredOtp>();
+type TimestampLike =
+  | Date
+  | { toMillis(): number }
+  | { seconds: number; nanoseconds?: number };
 
-function getOtpPepper(): string {
-  const secret = process.env.ACTIVATION_SESSION_SECRET;
-  if (!secret || secret.length < 32) {
-    throw new Error(
-      "ACTIVATION_SESSION_SECRET must be set with at least 32 characters.",
-    );
+function toExpiresDate(
+  value: TimestampLike | null | undefined,
+): Date | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value;
+  if ("toMillis" in value && typeof value.toMillis === "function") {
+    return new Date(value.toMillis());
   }
-  return secret;
+  if ("seconds" in value) {
+    return new Date(value.seconds * 1000);
+  }
+  return null;
 }
 
-function hashOtp(userId: string, otp: string): string {
-  return createHmac("sha256", getOtpPepper())
-    .update(`${userId}:${otp}`)
-    .digest("hex");
+function readActivationOtpFields(
+  user: Pick<User, "activationOtp" | "activationOtpExpiresAt">,
+) {
+  return {
+    hash: user.activationOtp ?? null,
+    expiresAt: toExpiresDate(user.activationOtpExpiresAt),
+  };
 }
 
-/** Generates a cryptographically random 6-digit OTP */
-export function generateOtpCode(): string {
-  return String(randomInt(100000, 1000000));
-}
-
-export function getOtpExpiryMs(now: Date = new Date()): number {
-  return now.getTime() + ACTIVATION_OTP.CODE_EXPIRY_MINUTES * 60 * 1000;
-}
-
-export function isOtpCodeExpired(
-  expiresAt: number,
-  now: Date = new Date(),
-): boolean {
-  return now.getTime() >= expiresAt;
-}
-
-export function storeOtpCode(
+/** Persists a hashed activation OTP on the member record (Firestore). */
+export async function storeOtpCode(
   userId: string,
   otp: string,
   now: Date = new Date(),
-): void {
-  otpStore.set(userId, {
-    hash: hashOtp(userId, otp),
-    expiresAt: getOtpExpiryMs(now),
+): Promise<void> {
+  await updateUserOtpTracking(userId, {
+    activationOtp: hashActivationOtp(userId, otp),
+    activationOtpExpiresAt: getActivationOtpExpiry(now),
   });
 }
 
-export function hasActiveOtpCode(
+export async function hasActiveOtpCode(
   userId: string,
   now: Date = new Date(),
-): boolean {
-  const stored = otpStore.get(userId);
-  if (!stored) return false;
-  return !isOtpCodeExpired(stored.expiresAt, now);
-}
-
-export function verifyOtpCode(
-  userId: string,
-  otp: string,
-  now: Date = new Date(),
-): boolean {
-  const stored = otpStore.get(userId);
-  if (!stored) return false;
-  if (isOtpCodeExpired(stored.expiresAt, now)) {
-    otpStore.delete(userId);
+): Promise<boolean> {
+  const user = await findUserById(userId);
+  if (!user?.activationOtp) {
     return false;
   }
 
-  const expected = Buffer.from(stored.hash, "hex");
-  const actual = Buffer.from(hashOtp(userId, otp), "hex");
-
-  if (expected.length !== actual.length) return false;
-
-  const matches = timingSafeEqual(expected, actual);
-  if (matches) {
-    otpStore.delete(userId);
+  const { hash, expiresAt } = readActivationOtpFields(user);
+  if (!hash) {
+    return false;
   }
-  return matches;
+
+  return !isActivationOtpExpired(expiresAt, now);
 }
 
-export function clearOtpCode(userId: string): void {
-  otpStore.delete(userId);
+export async function verifyOtpCode(
+  userId: string,
+  otp: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const user = await findUserById(userId);
+  if (!user) {
+    return false;
+  }
+
+  const { hash, expiresAt } = readActivationOtpFields(user);
+  if (!hash) {
+    return false;
+  }
+
+  if (isActivationOtpExpired(expiresAt, now)) {
+    await clearOtpCode(userId);
+    return false;
+  }
+
+  const isValid = verifyActivationOtpHash(userId, otp, hash);
+  if (isValid) {
+    await clearOtpCode(userId);
+  }
+
+  return isValid;
 }
 
-/** @internal Test helper */
-export function resetOtpStoreForTests(): void {
-  otpStore.clear();
-}
-
-/** @internal Test helper */
-export function getOtpStoreSizeForTests(): number {
-  return otpStore.size;
+export async function clearOtpCode(userId: string): Promise<void> {
+  await updateUserOtpTracking(userId, {
+    activationOtp: null,
+    activationOtpExpiresAt: null,
+  });
 }

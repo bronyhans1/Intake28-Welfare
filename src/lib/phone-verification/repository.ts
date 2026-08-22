@@ -187,7 +187,15 @@ export async function requestPhoneVerification(
     memberId,
     serviceNumber: existing.serviceNumber,
     verificationId: ref.id,
+    purpose: "phone_verification",
   });
+
+  if (!smsResult.sent) {
+    await ref.update({ status: Status.CANCELLED });
+    throw new Error(
+      smsResult.message ?? "Failed to send verification code.",
+    );
+  }
 
   await createAuditLog({
     action: PhoneVerificationAuditAction.PHONE_VERIFICATION_REQUESTED,
@@ -254,7 +262,14 @@ export async function resendPhoneVerification(
     memberId: verification.memberId,
     serviceNumber: verification.serviceNumber,
     verificationId,
+    purpose: "phone_verification",
   });
+
+  if (!smsResult.sent) {
+    throw new Error(
+      smsResult.message ?? "Failed to resend verification code.",
+    );
+  }
 
   return {
     verificationId,

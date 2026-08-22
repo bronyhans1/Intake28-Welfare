@@ -109,5 +109,5 @@ export async function completeMemberActivation(
   );
 
   await activateUserRecord(user.id, profileSnapshot);
-  clearOtpCode(user.id);
+  await clearOtpCode(user.id);
 }

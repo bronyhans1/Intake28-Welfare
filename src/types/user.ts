@@ -55,6 +55,9 @@ export interface User {
   otpAttempts: number;
   otpLockedUntil: Timestamp | null;
   activationOtpSentCount: number;
+  /** Hashed activation OTP — server-managed during activation only */
+  activationOtp?: string | null;
+  activationOtpExpiresAt?: Timestamp | null;
   /** Password reset OTP tracking — server-managed during forgot-password flow */
   passwordResetOtp?: string | null;
   passwordResetOtpExpiresAt?: Timestamp | null;

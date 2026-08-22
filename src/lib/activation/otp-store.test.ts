@@ -1,58 +1,138 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  hashActivationOtp,
+  getActivationOtpExpiry,
+} from "@/lib/activation/otp";
+import { ACTIVATION_OTP } from "@/lib/constants/activation-otp";
+
+const mockFindUserById = vi.fn();
+const mockUpdateUserOtpTracking = vi.fn();
+
+vi.mock("@/lib/activation/repository", () => ({
+  findUserById: (...args: unknown[]) => mockFindUserById(...args),
+  updateUserOtpTracking: (...args: unknown[]) =>
+    mockUpdateUserOtpTracking(...args),
+}));
+
 import {
   clearOtpCode,
   generateOtpCode,
-  getOtpExpiryMs,
   hasActiveOtpCode,
-  isOtpCodeExpired,
-  resetOtpStoreForTests,
   storeOtpCode,
   verifyOtpCode,
 } from "@/lib/activation/otp-store";
 
-describe("otp-store", () => {
+describe("activation otp-store (Firestore-backed)", () => {
   beforeEach(() => {
-    resetOtpStoreForTests();
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-06-14T12:00:00Z"));
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
+    vi.clearAllMocks();
+    process.env.ACTIVATION_SESSION_SECRET =
+      "test-secret-with-at-least-32-characters-long";
+    mockUpdateUserOtpTracking.mockResolvedValue(undefined);
   });
 
   it("generates a 6-digit OTP", () => {
     const otp = generateOtpCode();
     expect(otp).toMatch(/^\d{6}$/);
-    expect(Number(otp)).toBeGreaterThanOrEqual(100000);
-    expect(Number(otp)).toBeLessThan(1000000);
   });
 
-  it("stores and verifies a valid OTP once", () => {
-    storeOtpCode("user-1", "123456");
-    expect(hasActiveOtpCode("user-1")).toBe(true);
-    expect(verifyOtpCode("user-1", "123456")).toBe(true);
-    expect(hasActiveOtpCode("user-1")).toBe(false);
+  it("persists only the OTP hash", async () => {
+    await storeOtpCode("user-1", "123456");
+
+    expect(mockUpdateUserOtpTracking).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({
+        activationOtp: hashActivationOtp("user-1", "123456"),
+        activationOtpExpiresAt: expect.any(Date),
+      }),
+    );
+
+    const storedHash = mockUpdateUserOtpTracking.mock.calls[0][1]
+      .activationOtp as string;
+    expect(storedHash).not.toBe("123456");
   });
 
-  it("rejects invalid OTP without consuming a valid code", () => {
-    storeOtpCode("user-1", "123456");
-    expect(verifyOtpCode("user-1", "000000")).toBe(false);
-    expect(hasActiveOtpCode("user-1")).toBe(true);
+  it("detects active OTP from persisted user record", async () => {
+    const expiresAt = getActivationOtpExpiry();
+    mockFindUserById.mockResolvedValue({
+      id: "user-1",
+      activationOtp: hashActivationOtp("user-1", "123456"),
+      activationOtpExpiresAt: expiresAt,
+    });
+
+    expect(await hasActiveOtpCode("user-1")).toBe(true);
   });
 
-  it("expires OTP after 10 minutes", () => {
+  it("verifies correct OTP and clears persisted hash", async () => {
+    const expiresAt = getActivationOtpExpiry();
+    mockFindUserById.mockResolvedValue({
+      id: "user-1",
+      activationOtp: hashActivationOtp("user-1", "123456"),
+      activationOtpExpiresAt: expiresAt,
+    });
+
+    expect(await verifyOtpCode("user-1", "123456")).toBe(true);
+    expect(mockUpdateUserOtpTracking).toHaveBeenCalledWith("user-1", {
+      activationOtp: null,
+      activationOtpExpiresAt: null,
+    });
+  });
+
+  it("rejects invalid OTP without clearing hash", async () => {
+    const expiresAt = getActivationOtpExpiry();
+    mockFindUserById.mockResolvedValue({
+      id: "user-1",
+      activationOtp: hashActivationOtp("user-1", "123456"),
+      activationOtpExpiresAt: expiresAt,
+    });
+
+    expect(await verifyOtpCode("user-1", "000000")).toBe(false);
+    expect(mockUpdateUserOtpTracking).not.toHaveBeenCalled();
+  });
+
+  it("rejects expired OTP and clears persisted hash", async () => {
+    const expiredAt = new Date(Date.now() - 60_000);
+    mockFindUserById.mockResolvedValue({
+      id: "user-1",
+      activationOtp: hashActivationOtp("user-1", "123456"),
+      activationOtpExpiresAt: expiredAt,
+    });
+
+    expect(await verifyOtpCode("user-1", "123456")).toBe(false);
+    expect(mockUpdateUserOtpTracking).toHaveBeenCalledWith("user-1", {
+      activationOtp: null,
+      activationOtpExpiresAt: null,
+    });
+  });
+
+  it("clears OTP explicitly", async () => {
+    await clearOtpCode("user-1");
+    expect(mockUpdateUserOtpTracking).toHaveBeenCalledWith("user-1", {
+      activationOtp: null,
+      activationOtpExpiresAt: null,
+    });
+  });
+
+  it("survives separate service invocations via Firestore reads", async () => {
+    const expiresAt = getActivationOtpExpiry();
+    await storeOtpCode("user-1", "654321");
+
+    mockFindUserById.mockResolvedValue({
+      id: "user-1",
+      activationOtp: hashActivationOtp("user-1", "654321"),
+      activationOtpExpiresAt: expiresAt,
+    });
+
+    expect(await verifyOtpCode("user-1", "654321")).toBe(true);
+  });
+
+  it("uses 10-minute expiry constant", async () => {
     const now = new Date("2026-06-14T12:00:00Z");
-    storeOtpCode("user-1", "123456", now);
+    await storeOtpCode("user-1", "123456", now);
 
-    vi.setSystemTime(new Date(getOtpExpiryMs(now)));
-    expect(isOtpCodeExpired(getOtpExpiryMs(now))).toBe(true);
-    expect(verifyOtpCode("user-1", "123456")).toBe(false);
-  });
-
-  it("clears OTP codes explicitly", () => {
-    storeOtpCode("user-1", "123456");
-    clearOtpCode("user-1");
-    expect(hasActiveOtpCode("user-1")).toBe(false);
+    const expiresAt = mockUpdateUserOtpTracking.mock.calls[0][1]
+      .activationOtpExpiresAt as Date;
+    expect(expiresAt.getTime() - now.getTime()).toBe(
+      ACTIVATION_OTP.CODE_EXPIRY_MINUTES * 60 * 1000,
+    );
   });
 });

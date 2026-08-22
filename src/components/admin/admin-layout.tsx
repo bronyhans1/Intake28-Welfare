@@ -405,7 +405,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
                 size="sm"
                 onClick={() => setLogoutOpen(true)}
                 disabled={loggingOut || loading}
-                className="shrink-0"
+                className="shrink-0 border-red-600 bg-red-600 text-white hover:border-red-700 hover:bg-red-700 focus-visible:border-red-700 focus-visible:ring-red-600/30"
               >
                 <LogOut className="size-4" />
                 <span className="hidden sm:inline">Logout</span>
@@ -428,7 +428,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={loggingOut}>Cancel</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-[#166534] text-white hover:bg-[#14532d]"
+              className="bg-red-600 text-white hover:bg-red-700 focus-visible:border-red-700 focus-visible:ring-red-600/30"
               onClick={handleLogout}
               disabled={loggingOut}
             >

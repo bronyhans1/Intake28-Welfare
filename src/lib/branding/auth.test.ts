@@ -11,6 +11,6 @@ describe("auth branding", () => {
     expect(AUTH_SYSTEM_COPYRIGHT).toBe("© 2026 GIS WELFARE SYSTEM");
     expect(AUTH_POWERED_BY).toBe("Powered by Brony Hans");
     expect(AUTH_VERSION_LABEL).toBe(formatAppVersionLabel(APP_VERSION));
-    expect(AUTH_VERSION_LABEL).toBe("Version 1.7.0");
+    expect(AUTH_VERSION_LABEL).toBe("Version 1.7.2");
   });
 });

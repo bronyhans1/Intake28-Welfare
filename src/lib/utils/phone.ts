@@ -20,3 +20,25 @@ export function normalizePhoneNumber(phone: string): string {
 export function phoneNumbersMatch(a: string, b: string): boolean {
   return normalizePhoneNumber(a) === normalizePhoneNumber(b);
 }
+
+/**
+ * Formats a stored Ghana local number (0XXXXXXXXX) for Hubtel SMS delivery.
+ * Hubtel expects international format (+233XXXXXXXXX).
+ */
+export function formatPhoneForHubtelSms(phone: string): string {
+  const normalized = normalizePhoneNumber(phone);
+
+  if (normalized.startsWith("0") && normalized.length === 10) {
+    return `+233${normalized.slice(1)}`;
+  }
+
+  if (normalized.startsWith("233") && normalized.length === 12) {
+    return `+${normalized}`;
+  }
+
+  if (phone.startsWith("+")) {
+    return phone.replace(/\s/g, "");
+  }
+
+  return normalized;
+}
