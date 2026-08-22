@@ -18,10 +18,10 @@ describe("sendHubtelSms", () => {
     vi.unstubAllGlobals();
   });
 
-  it("posts to smsc.hubtel.com with query-parameter credentials", async () => {
+  it("posts JSON with Basic Auth to smsc.hubtel.com (PascalCase body)", async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      text: async () => JSON.stringify({ messageId: "msg-123" }),
+      text: async () => JSON.stringify({ MessageId: "msg-123" }),
     });
 
     const result = await sendHubtelSms("0241234567", OTP_MESSAGE);
@@ -30,30 +30,40 @@ describe("sendHubtelSms", () => {
     expect(result.messageId).toBe("msg-123");
 
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://smsc.hubtel.com/v1/messages/send");
     expect(init.method).toBe("POST");
-    expect(init.headers).toBeUndefined();
-    expect(init.body).toBeUndefined();
 
-    const parsed = new URL(url);
-    expect(parsed.origin + parsed.pathname).toBe(
-      "https://smsc.hubtel.com/v1/messages/send",
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Content-Type"]).toBe("application/json");
+    expect(headers.Authorization).toMatch(/^Basic /);
+    expect(headers.Authorization).not.toContain("client-secret");
+    expect(headers.Authorization).not.toContain("client-id");
+
+    const expectedBasic = Buffer.from("client-id:client-secret").toString(
+      "base64",
     );
-    expect(parsed.searchParams.get("clientid")).toBe("client-id");
-    expect(parsed.searchParams.get("clientsecret")).toBe("client-secret");
-    expect(parsed.searchParams.get("from")).toBe("GISINT28");
-    expect(parsed.searchParams.get("to")).toBe("+233241234567");
-    expect(parsed.searchParams.get("content")).toBe(OTP_MESSAGE);
-    expect(parsed.searchParams.get("content")).toMatch(/\d{6}/);
+    expect(headers.Authorization).toBe(`Basic ${expectedBasic}`);
+
+    const body = JSON.parse(String(init.body));
+    expect(body).toEqual({
+      From: "GISINT28",
+      To: "+233241234567",
+      Content: OTP_MESSAGE,
+    });
+    expect(Object.keys(body)).toEqual(["From", "To", "Content"]);
+    expect(body.Content).toMatch(/\d{6}/);
+    expect(url).not.toContain("clientid=");
+    expect(url).not.toContain("clientsecret=");
   });
 
-  it("accepts legacy PascalCase messageId in success responses", async () => {
+  it("accepts lowercase messageId in success responses", async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      text: async () => JSON.stringify({ MessageId: "msg-legacy" }),
+      text: async () => JSON.stringify({ messageId: "msg-lower" }),
     });
 
     const result = await sendHubtelSms("0241234567", "Hello");
-    expect(result.messageId).toBe("msg-legacy");
+    expect(result.messageId).toBe("msg-lower");
   });
 
   it("returns failure on HTTP error without logging credentials", async () => {
@@ -83,7 +93,6 @@ describe("sendHubtelSms", () => {
     expect(logged).not.toContain("client-id");
     expect(logged).not.toContain("654321");
     expect(logged).not.toContain("+233241234567");
-    expect(logged).not.toContain("smsc.hubtel.com/v1/messages/send?");
 
     consoleSpy.mockRestore();
   });
