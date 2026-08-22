@@ -1,13 +1,38 @@
 import { getHubtelConfig } from "@/lib/integrations/hubtel/config";
 import { formatPhoneForHubtelSms } from "@/lib/utils/phone";
 
-const HUBTEL_SMS_URL = "https://sms.hubtel.com/v1/messages/send";
+const HUBTEL_SMS_URL = "https://smsc.hubtel.com/v1/messages/send";
 const HUBTEL_SMS_TIMEOUT_MS = 15_000;
+const HUBTEL_ERROR_BODY_LOG_LIMIT = 500;
 
 export interface HubtelSmsResult {
   sent: boolean;
   messageId?: string;
   error?: string;
+}
+
+function maskPhoneInText(value: string): string {
+  return value
+    .replace(/\+233\d{9}/g, "+233*******")
+    .replace(/\b0\d{9}\b/g, "0*******");
+}
+
+/** Redacts OTP-like codes and phone numbers from Hubtel error payloads. */
+function sanitizeHubtelErrorBody(text: string): string {
+  const redacted = maskPhoneInText(text)
+    .replace(/\b\d{6}\b/g, "******")
+    .replace(/"(client[_-]?secret|password|authorization)"\s*:\s*"[^"]*"/gi, '"$1":"***"');
+
+  if (redacted.length <= HUBTEL_ERROR_BODY_LOG_LIMIT) {
+    return redacted;
+  }
+
+  return `${redacted.slice(0, HUBTEL_ERROR_BODY_LOG_LIMIT)}…`;
+}
+
+function parseMessageId(payload: Record<string, unknown>): string | undefined {
+  const messageId = payload.messageId ?? payload.MessageId;
+  return typeof messageId === "string" ? messageId : undefined;
 }
 
 /**
@@ -32,9 +57,9 @@ export async function sendHubtelSms(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        From: config.HUBTEL_SENDER_ID,
-        To: recipient,
-        Content: message,
+        from: config.HUBTEL_SENDER_ID,
+        to: recipient,
+        content: message,
       }),
       signal: AbortSignal.timeout(HUBTEL_SMS_TIMEOUT_MS),
     });
@@ -45,26 +70,28 @@ export async function sendHubtelSms(
       console.error("[hubtel:sms] HTTP error", {
         status: response.status,
         recipientSuffix: recipient.slice(-4),
+        responseBody: sanitizeHubtelErrorBody(responseText),
       });
       return { sent: false, error: `http_${response.status}` };
     }
 
-    let payload: { MessageId?: string } = {};
-    if (responseText.trim()) {
-      try {
-        payload = JSON.parse(responseText) as { MessageId?: string };
-      } catch {
-        console.error("[hubtel:sms] Malformed JSON response", {
-          recipientSuffix: recipient.slice(-4),
-        });
-        return { sent: false, error: "malformed_response" };
-      }
+    if (!responseText.trim()) {
+      return { sent: true };
     }
 
-    return { sent: true, messageId: payload.MessageId };
+    try {
+      const payload = JSON.parse(responseText) as Record<string, unknown>;
+      return { sent: true, messageId: parseMessageId(payload) };
+    } catch {
+      console.error("[hubtel:sms] Malformed JSON response", {
+        recipientSuffix: recipient.slice(-4),
+        responseBody: sanitizeHubtelErrorBody(responseText),
+      });
+      return { sent: false, error: "malformed_response" };
+    }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "unknown";
-    console.error("[hubtel:sms] Request failed", { error: message });
+    const errorMessage = error instanceof Error ? error.message : "unknown";
+    console.error("[hubtel:sms] Request failed", { error: errorMessage });
     return { sent: false, error: "network_failure" };
   }
 }
