@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronDown, Search } from "lucide-react";
 import {
   checkPaidMonthlyDuesMonthAction,
   createContributionAction,
@@ -37,6 +37,7 @@ import {
   formatMonthYearLabel,
   getCurrentMonthYear,
 } from "@/lib/finance/period";
+import { cn } from "@/lib/utils";
 import {
   CONTRIBUTION_TYPE_LABELS,
   ContributionType,
@@ -50,11 +51,34 @@ interface ContributionsNewFormProps {
 
 type MonthCheckStatus = "idle" | "loading" | "exists" | "absent" | "error";
 
+function memberMatchesSearch(
+  member: SerializedMember,
+  query: string,
+): boolean {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+
+  const name = member.fullName.toLowerCase();
+  const serviceNumber = member.serviceNumber.toLowerCase();
+  const serviceSuffix = member.serviceNumberSuffix?.toLowerCase() ?? "";
+
+  return (
+    name.includes(normalized) ||
+    serviceNumber.includes(normalized) ||
+    serviceSuffix.includes(normalized) ||
+    serviceNumber.replace(/\//g, "").includes(normalized.replace(/\//g, ""))
+  );
+}
+
 export function ContributionsNewForm({
   members,
   monthlyDuesAmount,
 }: ContributionsNewFormProps) {
   const [selectedMemberId, setSelectedMemberId] = useState<string>("");
+  const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
+  const memberPickerRef = useRef<HTMLDivElement>(null);
+  const memberSearchInputRef = useRef<HTMLInputElement>(null);
   const [serverError, setServerError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [monthCheckStatus, setMonthCheckStatus] =
@@ -64,6 +88,41 @@ export function ContributionsNewForm({
     () => members.find((m) => m.id === selectedMemberId),
     [members, selectedMemberId],
   );
+
+  const filteredMembers = useMemo(
+    () => members.filter((member) => memberMatchesSearch(member, memberSearch)),
+    [members, memberSearch],
+  );
+
+  useEffect(() => {
+    if (!memberPickerOpen) return;
+
+    memberSearchInputRef.current?.focus();
+
+    function handlePointerDown(event: MouseEvent) {
+      if (
+        memberPickerRef.current &&
+        !memberPickerRef.current.contains(event.target as Node)
+      ) {
+        setMemberPickerOpen(false);
+        setMemberSearch("");
+      }
+    }
+
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setMemberPickerOpen(false);
+        setMemberSearch("");
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [memberPickerOpen]);
 
   const form = useForm<CreateContributionInput>({
     resolver: zodResolver(createContributionSchema),
@@ -175,6 +234,8 @@ export function ContributionsNewForm({
       setValue("memberName", member.fullName, { shouldValidate: false });
       setValue("serviceNumber", member.serviceNumber, { shouldValidate: false });
     }
+    setMemberPickerOpen(false);
+    setMemberSearch("");
   }
 
   function onSubmit(values: CreateContributionInput) {
@@ -195,26 +256,98 @@ export function ContributionsNewForm({
               <div className="grid gap-6 sm:grid-cols-2">
                 <Field data-invalid={!!errors.memberId} className="sm:col-span-2">
                   <FieldLabel>Member</FieldLabel>
-                  <Select
-                    value={selectedMemberId}
-                    onValueChange={(v: string | null) => handleMemberChange(v)}
-                    disabled={isPending}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a member">
+                  <div ref={memberPickerRef} className="relative">
+                    <button
+                      type="button"
+                      disabled={isPending}
+                      aria-expanded={memberPickerOpen}
+                      aria-haspopup="listbox"
+                      onClick={() => {
+                        setMemberPickerOpen((open) => {
+                          const next = !open;
+                          if (!next) setMemberSearch("");
+                          return next;
+                        });
+                      }}
+                      className={cn(
+                        "flex h-8 w-full items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm outline-none transition-colors",
+                        "focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                        "disabled:cursor-not-allowed disabled:opacity-50",
+                        errors.memberId
+                          ? "border-destructive aria-invalid:ring-destructive/20"
+                          : null,
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "truncate text-left",
+                          selectedMember
+                            ? "text-foreground"
+                            : "text-muted-foreground",
+                        )}
+                      >
                         {selectedMember
                           ? `${selectedMember.fullName} — ${selectedMember.serviceNumber}`
-                          : null}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {members.map((member) => (
-                        <SelectItem key={member.id} value={member.id}>
-                          {member.fullName} — {member.serviceNumber}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                          : "Select a member"}
+                      </span>
+                      <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                    </button>
+
+                    {memberPickerOpen ? (
+                      <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-lg border border-black/[0.08] bg-popover text-popover-foreground shadow-md ring-1 ring-foreground/10">
+                        <div className="border-b border-black/[0.06] p-2">
+                          <div className="relative">
+                            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                              ref={memberSearchInputRef}
+                              value={memberSearch}
+                              onChange={(event) =>
+                                setMemberSearch(event.target.value)
+                              }
+                              placeholder="Search by name or service number..."
+                              className="h-8 pl-8"
+                              autoComplete="off"
+                            />
+                          </div>
+                        </div>
+                        <ul
+                          role="listbox"
+                          className="max-h-60 overflow-y-auto p-1"
+                        >
+                          {filteredMembers.length === 0 ? (
+                            <li className="px-2 py-3 text-center text-sm text-muted-foreground">
+                              No members found.
+                            </li>
+                          ) : (
+                            filteredMembers.map((member) => {
+                              const isSelected = member.id === selectedMemberId;
+                              return (
+                                <li key={member.id}>
+                                  <button
+                                    type="button"
+                                    role="option"
+                                    aria-selected={isSelected}
+                                    className={cn(
+                                      "flex w-full rounded-md px-2 py-1.5 text-left text-sm outline-none",
+                                      "hover:bg-accent hover:text-accent-foreground",
+                                      isSelected
+                                        ? "bg-accent text-accent-foreground"
+                                        : null,
+                                    )}
+                                    onClick={() =>
+                                      handleMemberChange(member.id)
+                                    }
+                                  >
+                                    {member.fullName} — {member.serviceNumber}
+                                  </button>
+                                </li>
+                              );
+                            })
+                          )}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
                   <FieldError errors={[errors.memberId]} />
                 </Field>
 
