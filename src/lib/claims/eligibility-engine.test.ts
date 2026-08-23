@@ -166,6 +166,39 @@ describe("evaluateMemberEligibility", () => {
     ).toBe(false);
   });
 
+  it("treats a 100% complete serialized member as profile-complete", () => {
+    const result = evaluateMemberEligibility({
+      member: completeMember({
+        // Matches getMemberById serialization (ISO string DOB)
+        dateOfBirth: "1990-01-15T00:00:00.000Z",
+      }),
+      claimTypeConfig: claimType,
+      constitution,
+      asOf,
+    });
+
+    expect(
+      result.checks.find((check) => check.key === "profileCompletion")?.passed,
+    ).toBe(true);
+    expect(result.reasons).not.toContain(ELIGIBILITY_REASONS.PROFILE_INCOMPLETE);
+  });
+
+  it("fails profile completion when only date of birth is missing", () => {
+    const result = evaluateMemberEligibility({
+      member: completeMember({
+        dateOfBirth: null,
+      }),
+      claimTypeConfig: claimType,
+      constitution,
+      asOf,
+    });
+
+    expect(
+      result.checks.find((check) => check.key === "profileCompletion")?.passed,
+    ).toBe(false);
+    expect(result.reasons).toContain(ELIGIBILITY_REASONS.PROFILE_INCOMPLETE);
+  });
+
   it("passes when the waiting period is satisfied", () => {
     const result = evaluateMemberEligibility({
       member: completeMember({

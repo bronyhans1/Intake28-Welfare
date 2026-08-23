@@ -9,6 +9,7 @@ import {
 } from "@/lib/claims/eligibility-service";
 import type { MemberEligibilityResult } from "@/lib/claims/eligibility-engine";
 import { getProgressionSummary } from "@/lib/progression";
+import { ClaimAmountMode } from "@/types/enums";
 import type { MembershipProgressionSummary } from "@/types/membership-progression";
 import type { ClaimProgressionSnapshot } from "@/types/claims";
 import type { SerializedClaimTypeConfig } from "@/types/claims";
@@ -21,6 +22,17 @@ export const CLAIM_PROGRESSION_REASONS = {
   CEILING_MISSING:
     "This claim type has no maximum claim ceiling configured. Contact an administrator.",
 } as const;
+
+/**
+ * Maximum claim ceiling is required for Fixed Amount and Percentage of Contribution.
+ * Executive Decision (manual) amounts are set by the Welfare Executive — no ceiling
+ * is required merely to pass eligibility / submit.
+ */
+export function claimTypeRequiresMaximumClaimCeiling(
+  amountMode: ClaimAmountMode | string | null | undefined,
+): boolean {
+  return amountMode !== ClaimAmountMode.MANUAL;
+}
 
 export const ClaimApprovalDecision = {
   RECOMMENDED: "recommended",
@@ -45,7 +57,10 @@ export const CLAIM_APPROVAL_DECISION_LABELS: Record<
 
 /** Maximum claim ceiling from claim-type configuration (fixedAmount). */
 export function resolveClaimCeiling(
-  claimType: Pick<SerializedClaimTypeConfig, "fixedAmount" | "displayName">,
+  claimType: Pick<
+    SerializedClaimTypeConfig,
+    "fixedAmount" | "displayName" | "amountMode"
+  >,
 ): number {
   if (
     typeof claimType.fixedAmount === "number" &&
@@ -76,8 +91,8 @@ export function calculateRecommendedBenefitAmount(
 
 export function buildClaimProgressionSnapshot(input: {
   progression: MembershipProgressionSummary;
-  recommendedAmount: number;
-  claimCeiling: number;
+  recommendedAmount: number | null;
+  claimCeiling: number | null;
   calculatedAt?: string;
 }): ClaimProgressionSnapshot {
   return {
@@ -149,28 +164,32 @@ export async function evaluateClaimSubmissionEligibility(params: {
 
   let claimCeiling: number | null = null;
   let recommendedAmount: number | null = null;
+  const requiresCeiling = claimType
+    ? claimTypeRequiresMaximumClaimCeiling(claimType.amountMode)
+    : true;
 
   if (claimType) {
-    try {
-      claimCeiling = resolveClaimCeiling(claimType);
-      recommendedAmount = calculateRecommendedBenefitAmount(
-        claimCeiling,
-        progression.benefitPercentage,
-      );
-    } catch {
-      claimCeiling = null;
-      recommendedAmount = null;
-      reasons.push(CLAIM_PROGRESSION_REASONS.CEILING_MISSING);
+    if (requiresCeiling) {
+      try {
+        claimCeiling = resolveClaimCeiling(claimType);
+        recommendedAmount = calculateRecommendedBenefitAmount(
+          claimCeiling,
+          progression.benefitPercentage,
+        );
+      } catch {
+        claimCeiling = null;
+        recommendedAmount = null;
+        reasons.push(CLAIM_PROGRESSION_REASONS.CEILING_MISSING);
+      }
     }
   } else {
     reasons.push("Claim type configuration was not found.");
   }
 
+  const ceilingOk = !requiresCeiling || (claimCeiling != null && recommendedAmount != null);
+
   const eligible =
-    base.eligible &&
-    progression.eligibleToClaim &&
-    claimCeiling != null &&
-    recommendedAmount != null;
+    base.eligible && progression.eligibleToClaim && claimType != null && ceilingOk;
 
   return {
     ...base,
@@ -209,8 +228,8 @@ export async function loadProgressionSnapshotForClaim(input: {
 }): Promise<{
   progression: MembershipProgressionSummary;
   snapshot: ClaimProgressionSnapshot;
-  recommendedAmount: number;
-  claimCeiling: number;
+  recommendedAmount: number | null;
+  claimCeiling: number | null;
 }> {
   const progression = await assertMemberEligibleToClaim(input.memberId);
   const claimType = await getClaimTypeConfigByCode(input.claimTypeCode);
@@ -218,11 +237,17 @@ export async function loadProgressionSnapshotForClaim(input: {
     throw new Error("Claim type configuration was not found.");
   }
 
-  const claimCeiling = resolveClaimCeiling(claimType);
-  const recommendedAmount = calculateRecommendedBenefitAmount(
-    claimCeiling,
-    progression.benefitPercentage,
-  );
+  let claimCeiling: number | null = null;
+  let recommendedAmount: number | null = null;
+
+  if (claimTypeRequiresMaximumClaimCeiling(claimType.amountMode)) {
+    claimCeiling = resolveClaimCeiling(claimType);
+    recommendedAmount = calculateRecommendedBenefitAmount(
+      claimCeiling,
+      progression.benefitPercentage,
+    );
+  }
+
   const snapshot = buildClaimProgressionSnapshot({
     progression,
     recommendedAmount,

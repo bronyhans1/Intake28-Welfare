@@ -599,16 +599,9 @@ export async function submitClaimDraft(
     );
   }
 
-  if (
-    eligibility.recommendedAmount == null ||
-    eligibility.claimCeiling == null
-  ) {
-    throw new Error(
-      eligibility.reasons[0] ??
-        "Recommended benefit amount could not be calculated for this claim type.",
-    );
-  }
-
+  // Executive Decision may leave recommendedAmount / claimCeiling null.
+  // Fixed Amount and Percentage of Contribution are already blocked above
+  // when those values could not be resolved.
   const progressionSnapshot = buildClaimProgressionSnapshot({
     progression: eligibility.progression,
     recommendedAmount: eligibility.recommendedAmount,
@@ -872,16 +865,9 @@ export async function resubmitClaim(
     );
   }
 
-  if (
-    eligibility.recommendedAmount == null ||
-    eligibility.claimCeiling == null
-  ) {
-    throw new Error(
-      eligibility.reasons[0] ??
-        "Recommended benefit amount could not be calculated for this claim type.",
-    );
-  }
-
+  // Executive Decision may leave recommendedAmount / claimCeiling null.
+  // Fixed Amount and Percentage of Contribution are already blocked above
+  // when those values could not be resolved.
   const progressionSnapshot = buildClaimProgressionSnapshot({
     progression: eligibility.progression,
     recommendedAmount: eligibility.recommendedAmount,

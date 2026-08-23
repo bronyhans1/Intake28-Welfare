@@ -128,8 +128,10 @@ export interface ClaimProgressionSnapshot {
   membershipStatus: string;
   isMature: boolean;
   eligibleToClaim: boolean;
-  recommendedAmount: number;
-  claimCeiling: number;
+  /** Null when benefit amount method is Executive Decision (no configured ceiling). */
+  recommendedAmount: number | null;
+  /** Null when benefit amount method is Executive Decision (no configured ceiling). */
+  claimCeiling: number | null;
   calculatedAt: string;
 }
 

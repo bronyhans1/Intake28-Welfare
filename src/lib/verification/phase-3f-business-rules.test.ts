@@ -87,6 +87,7 @@ vi.mock("@/lib/claims/claim-type-repository", () => ({
   getClaimTypeConfigByCode: vi.fn().mockResolvedValue({
     code: "medical_support",
     displayName: "Medical Support",
+    amountMode: "fixed",
     fixedAmount: 1000,
   }),
 }));

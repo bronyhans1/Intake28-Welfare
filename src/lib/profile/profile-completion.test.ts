@@ -122,4 +122,33 @@ describe("calculateProfileCompletion", () => {
     expect(result.percentage).toBe(100);
     expect(result.isComplete).toBe(true);
   });
+
+  it("treats serialized ISO date-of-birth strings as complete", () => {
+    const result = calculateProfileCompletion(
+      baseUser({
+        dateOfBirth: "1990-01-01T00:00:00.000Z",
+        nextOfKin: "Jane Doe",
+        emergencyContact: "0249999999",
+        ...completeParents,
+      }),
+    );
+
+    expect(result.percentage).toBe(100);
+    expect(result.isComplete).toBe(true);
+    expect(result.missingFields).toEqual([]);
+  });
+
+  it("still reports incomplete when date of birth is missing", () => {
+    const result = calculateProfileCompletion(
+      baseUser({
+        dateOfBirth: null,
+        nextOfKin: "Jane Doe",
+        emergencyContact: "0249999999",
+        ...completeParents,
+      }),
+    );
+
+    expect(result.isComplete).toBe(false);
+    expect(result.missingFields).toContain("dateOfBirth");
+  });
 });

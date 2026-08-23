@@ -71,6 +71,10 @@ function isNonEmptyString(value: unknown): value is string {
 
 function isDateOfBirthComplete(value: unknown): boolean {
   if (value == null) return false;
+  // Serialized members (getMemberById) expose DOB as an ISO string.
+  if (typeof value === "string" && value.trim()) {
+    return !Number.isNaN(Date.parse(value));
+  }
   if (value instanceof Date) return !Number.isNaN(value.getTime());
   if (value instanceof Timestamp) return true;
   if (typeof value === "object" && value !== null && "seconds" in value) {
