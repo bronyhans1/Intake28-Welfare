@@ -30,7 +30,7 @@ import { cn } from "@/lib/utils";
 
 export function MemberNotificationBell() {
   const router = useRouter();
-  const count = useUnreadNotificationCount();
+  const count = useUnreadNotificationCount(60_000, "member");
   const { showSuccess } = useToast();
   const [recent, setRecent] = useState<SerializedNotificationEvent[]>([]);
   const [open, setOpen] = useState(false);
@@ -48,7 +48,7 @@ export function MemberNotificationBell() {
     if (!open) return;
 
     let active = true;
-    void fetchRecentUnreadNotificationsAction(5).then((result) => {
+    void fetchRecentUnreadNotificationsAction(5, "member").then((result) => {
       if (active && !result.error) {
         setRecent(result.records);
       }
@@ -63,7 +63,7 @@ export function MemberNotificationBell() {
     setPendingAction({ type: "read", id: notificationId });
     startTransition(async () => {
       try {
-        await markNotificationReadAction(notificationId);
+        await markNotificationReadAction(notificationId, "member");
         router.refresh();
       } finally {
         setPendingAction(null);
@@ -75,7 +75,7 @@ export function MemberNotificationBell() {
     setPendingAction({ type: "read-all" });
     startTransition(async () => {
       try {
-        await markAllNotificationsReadAction();
+        await markAllNotificationsReadAction("member");
         setRecent([]);
         showSuccess("All notifications marked as read.");
         router.refresh();

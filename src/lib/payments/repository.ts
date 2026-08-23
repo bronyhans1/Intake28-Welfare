@@ -14,10 +14,12 @@ import { resolvePaymentCategory } from "@/lib/payments/payment-category";
 import { generatePaymentReference } from "@/lib/payments/reference";
 import {
   paystackInitializeTransaction,
-  paystackVerifyTransaction,
 } from "@/lib/integrations/paystack/client";
-import { ensureContributionFromPayment } from "@/lib/payments/contribution-automation";
 import { abandonStalePendingPayments } from "@/lib/payments/lifecycle";
+import {
+  PaymentSettlementError,
+  settlePaymentFromPaystackReference,
+} from "@/lib/payments/settlement";
 import {
   assertMonthlyDuesPaymentAllowed,
   normalizeSelectedMonths,
@@ -195,6 +197,13 @@ export async function updatePaymentStatus(
   const payment = await getPaymentByReference(reference);
   if (!payment) {
     throw new Error("Payment not found.");
+  }
+
+  if (
+    payment.status === PaymentStatus.SUCCESS &&
+    updates.status !== PaymentStatus.SUCCESS
+  ) {
+    return payment;
   }
 
   const db = getAdminDb();
@@ -382,7 +391,7 @@ export async function initializePayment(
     );
   }
 
-  const callbackUrl = `${env.client().NEXT_PUBLIC_APP_URL}/payments?reference=${encodeURIComponent(reference)}`;
+  const callbackUrl = `${env.client().NEXT_PUBLIC_APP_URL}/api/payments/callback?reference=${encodeURIComponent(reference)}`;
 
   await createPayment({
     memberId: member.id,
@@ -446,8 +455,6 @@ export async function verifyPayment(
     throw new Error("Payment not found.");
   }
 
-  await abandonStalePendingPayments();
-
   if (actor.role === UserRole.MEMBER && payment.memberId !== actor.uid) {
     throw new Error("You do not have permission to verify this payment.");
   }
@@ -460,41 +467,16 @@ export async function verifyPayment(
     throw new Error("You do not have permission to verify payments.");
   }
 
-  const verification = await paystackVerifyTransaction(reference);
-  const updated = await updatePaymentStatus(reference, {
-    status: verification.status,
-    providerReference: verification.providerReference,
-    paidAt: verification.paidAt,
-  });
-
-  await createAuditLog({
-    action: PaymentAuditAction.PAYMENT_VERIFIED,
-    entityType: "payment",
-    entityId: reference,
-    ...buildAuditActor(actor),
-    metadata: {
-      memberId: payment.memberId,
-      memberName: payment.memberName,
-      serviceNumber: payment.serviceNumber,
-      amount: payment.amount,
-      currency: payment.currency,
-      reference,
-      status: verification.status,
-      providerReference: verification.providerReference,
-    },
-  });
-
-  if (updated.status === PaymentStatus.SUCCESS) {
-    const paymentForAutomation: SerializedPayment = {
-      ...payment,
-      status: updated.status,
-      providerReference: updated.providerReference,
-      paidAt: updated.paidAt,
-      updatedAt: updated.updatedAt,
-    };
-
-    await ensureContributionFromPayment(paymentForAutomation, actor);
+  try {
+    const result = await settlePaymentFromPaystackReference(reference, {
+      actor,
+      source: "verify",
+    });
+    return result.payment;
+  } catch (error) {
+    if (error instanceof PaymentSettlementError) {
+      throw new Error(error.message);
+    }
+    throw error;
   }
-
-  return updated;
 }

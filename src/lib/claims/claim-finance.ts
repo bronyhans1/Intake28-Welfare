@@ -231,6 +231,41 @@ export async function completeClaimPayment(
   return { paymentId: payment.id };
 }
 
+/**
+ * Treasurer-facing one-step payment from Welfare Records.
+ * Reuses startClaimPaymentProcessing + completeClaimPayment without duplicating
+ * payment/ledger logic.
+ */
+export async function payClaimFromWelfareRecords(
+  claimId: string,
+  input: Omit<CompleteClaimPaymentInput, "claimId">,
+  actor: CurrentUser,
+): Promise<{ paymentId: string }> {
+  requireFinancePermission(actor);
+
+  const existing = await getClaimById(claimId);
+  if (!existing) {
+    throw new Error("Claim not found.");
+  }
+  if (existing.paymentId || existing.status === ClaimStatus.PAID) {
+    throw new Error("This claim has already been paid.");
+  }
+  if (
+    existing.status !== ClaimStatus.AWAITING_PAYMENT &&
+    existing.status !== ClaimStatus.PAYMENT_PROCESSING
+  ) {
+    throw new Error(
+      "Only claims awaiting payment can be paid from Welfare Records.",
+    );
+  }
+
+  if (existing.status === ClaimStatus.AWAITING_PAYMENT) {
+    await startClaimPaymentProcessing(claimId, actor);
+  }
+
+  return completeClaimPayment(claimId, input, actor);
+}
+
 export function parseClaimPaymentDate(value: string): Date {
   const date = new Date(`${value}T12:00:00`);
   if (Number.isNaN(date.getTime())) {

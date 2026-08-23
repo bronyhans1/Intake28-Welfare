@@ -30,9 +30,21 @@ const claimTypeCodeSchema = z
   );
 
 export const createClaimDraftSchema = z.object({
-  claimTypeCode: claimTypeCodeSchema,
-  title: z.string().trim().min(1, "Title is required").max(200),
-  description: z.string().trim().min(1, "Description is required").max(5000),
+  claimTypeCode: z
+    .string()
+    .trim()
+    .min(1, "Claim type is required")
+    .max(64, "Claim type is invalid")
+    .regex(
+      /^[a-z][a-z0-9_]*$/,
+      "Select a valid claim type",
+    ),
+  title: z.string().trim().min(1, "Title is required").max(200, "Title is too long"),
+  description: z
+    .string()
+    .trim()
+    .min(1, "Description is required")
+    .max(5000, "Description is too long"),
   incidentDate: z
     .string()
     .trim()
@@ -48,7 +60,7 @@ export const createClaimDraftSchema = z.object({
     .transform((value) => (value ? value : null)),
   attachmentUrl: z
     .string()
-    .url()
+    .url("Attachment URL is invalid")
     .optional()
     .nullable()
     .transform((value) => (value ? value : null)),
@@ -263,6 +275,14 @@ export type AddExecutiveCommentInput = z.infer<typeof addExecutiveCommentSchema>
 
 export const recommendClaimSchema = z.object({
   claimId: z.string().trim().min(1, "Claim id is required"),
+  /** Required for Executive Decision (manual) claim types. */
+  recommendedAmount: z.coerce.number().positive().finite().optional(),
+  reason: z
+    .string()
+    .trim()
+    .max(2000, "Recommendation reason is too long")
+    .optional()
+    .nullable(),
 });
 
 export type RecommendClaimInput = z.infer<typeof recommendClaimSchema>;

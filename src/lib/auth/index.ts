@@ -18,6 +18,10 @@ export {
   syncAuthRoleCookie,
 } from "./session";
 export { hasPermission, hasAnyPermission, hasAllPermissions, Permission, ROLE_PERMISSIONS } from "./permissions";
+export {
+  canAccessMemberPortal,
+  getMemberPortalAccessRedirect,
+} from "./member-portal-access";
 export { canAccessRoute, PUBLIC_ROUTES, MEMBER_ROUTES, ADMIN_ROUTES } from "./routes";
 export {
   isPublicRoute,

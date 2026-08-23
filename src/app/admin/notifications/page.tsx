@@ -53,7 +53,7 @@ export default async function AdminNotificationsPage({
   const query = parsed.success
     ? parsed.data
     : notificationListQuerySchema.parse({});
-  const data = await listNotificationsForUser(actor, query);
+  const data = await listNotificationsForUser(actor, query, "management");
   const canManage = canManageNotifications(actor.role);
 
   return (

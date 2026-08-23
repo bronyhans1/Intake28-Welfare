@@ -15,6 +15,7 @@ import {
   notificationListQuerySchema,
   type NotificationListQuery,
 } from "@/lib/notifications/repository";
+import type { NotificationContext } from "@/lib/notifications/context";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 
 export type NotificationActionState = {
@@ -35,6 +36,7 @@ function revalidateNotificationPaths() {
 
 export async function markNotificationReadAction(
   notificationId: string,
+  context: NotificationContext = "management",
 ): Promise<NotificationActionState> {
   const actor = await getCurrentUserFromSession();
 
@@ -47,7 +49,7 @@ export async function markNotificationReadAction(
   }
 
   try {
-    await markNotificationAsRead(notificationId, actor);
+    await markNotificationAsRead(notificationId, actor, context);
     revalidateNotificationPaths();
     return { success: true };
   } catch (error) {
@@ -60,7 +62,9 @@ export async function markNotificationReadAction(
   }
 }
 
-export async function markAllNotificationsReadAction(): Promise<NotificationActionState> {
+export async function markAllNotificationsReadAction(
+  context: NotificationContext = "management",
+): Promise<NotificationActionState> {
   const actor = await getCurrentUserFromSession();
 
   if (!actor || !canAccessNotificationCentre(actor.role)) {
@@ -72,7 +76,7 @@ export async function markAllNotificationsReadAction(): Promise<NotificationActi
   }
 
   try {
-    const count = await markAllNotificationsAsRead(actor);
+    const count = await markAllNotificationsAsRead(actor, context);
     revalidateNotificationPaths();
     return { success: true, count };
   } catch (error) {
@@ -112,7 +116,9 @@ export async function archiveNotificationAction(
   }
 }
 
-export async function fetchUnreadNotificationCountAction(): Promise<{
+export async function fetchUnreadNotificationCountAction(
+  context: NotificationContext = "management",
+): Promise<{
   count: number;
   error?: string;
 }> {
@@ -126,11 +132,14 @@ export async function fetchUnreadNotificationCountAction(): Promise<{
     return { count: 0 };
   }
 
-  const count = await getUnreadNotificationCount(actor);
+  const count = await getUnreadNotificationCount(actor, context);
   return { count };
 }
 
-export async function fetchRecentUnreadNotificationsAction(limit = 5): Promise<{
+export async function fetchRecentUnreadNotificationsAction(
+  limit = 5,
+  context: NotificationContext = "management",
+): Promise<{
   records: Awaited<ReturnType<typeof getRecentUnreadNotifications>>;
   error?: string;
 }> {
@@ -144,12 +153,13 @@ export async function fetchRecentUnreadNotificationsAction(limit = 5): Promise<{
     return { records: [] };
   }
 
-  const records = await getRecentUnreadNotifications(actor, limit);
+  const records = await getRecentUnreadNotifications(actor, limit, context);
   return { records };
 }
 
 export async function fetchNotificationsAction(
   query: NotificationListQuery,
+  context: NotificationContext = "management",
 ): Promise<
   | { success: true; data: Awaited<ReturnType<typeof listNotificationsForUser>> }
   | { error: string }
@@ -172,7 +182,7 @@ export async function fetchNotificationsAction(
   try {
     return {
       success: true,
-      data: await listNotificationsForUser(actor, parsed.data),
+      data: await listNotificationsForUser(actor, parsed.data, context),
     };
   } catch {
     return { error: "Failed to load notifications." };

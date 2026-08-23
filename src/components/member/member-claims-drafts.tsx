@@ -23,6 +23,11 @@ import {
   buildClaimAttachmentStoragePath,
   validateClaimAttachment,
 } from "@/lib/claims/claim-attachment";
+import {
+  focusClaimFormField,
+  getFirstInvalidClaimFormField,
+  mapClaimFormFieldErrors,
+} from "@/lib/claims/claim-form-validation";
 import { CLAIM_ATTACHMENT } from "@/lib/constants";
 import { storageService } from "@/lib/storage/service";
 import { formatDisplayDate } from "@/lib/utils/format-date";
@@ -82,6 +87,7 @@ export function MemberClaimsDrafts({
   const [returnReason, setReturnReason] = useState<string | null>(null);
   const [lockedClaimNumber, setLockedClaimNumber] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [eligibilityResult, setEligibilityResult] =
     useState<ClaimSubmissionEligibilityResult | null>(null);
   const [eligibilityLoading, setEligibilityLoading] = useState(false);
@@ -147,10 +153,58 @@ export function MemberClaimsDrafts({
     setLockedClaimNumber(null);
     setShowForm(false);
     setError(null);
+    setFieldErrors({});
     setEligibilityResult(null);
     setEligibilityError(null);
     setPendingFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function clearFieldError(field: string) {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  }
+
+  function applyActionValidationErrors(result: {
+    error?: string;
+    fieldErrors?: Record<string, string[] | undefined>;
+  }): void {
+    const mapped = mapClaimFormFieldErrors(result.fieldErrors);
+    const hasFieldErrors = Object.keys(mapped).length > 0;
+    if (hasFieldErrors) {
+      setFieldErrors(mapped);
+      const firstInvalid = getFirstInvalidClaimFormField(mapped);
+      if (firstInvalid) {
+        focusClaimFormField(firstInvalid);
+      }
+      return;
+    }
+
+    // Field-level UI already covers schema validation; only show specific non-field errors.
+    const message = result.error?.trim();
+    if (
+      message &&
+      message !== "Please correct the errors below."
+    ) {
+      setError(message);
+      showError(message);
+    }
+  }
+
+  function fieldErrorMessage(field: string): string | null {
+    return fieldErrors[field] ?? null;
+  }
+
+  function updateFormField<K extends keyof FormState>(
+    field: K,
+    value: FormState[K],
+  ) {
+    setForm((current) => ({ ...current, [field]: value }));
+    clearFieldError(String(field));
   }
 
   function startEdit(claim: SerializedClaim) {
@@ -163,6 +217,8 @@ export function MemberClaimsDrafts({
     setLockedClaimNumber(null);
     setEditingId(claim.id);
     setShowForm(true);
+    setError(null);
+    setFieldErrors({});
     setPendingFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setForm({
@@ -184,6 +240,8 @@ export function MemberClaimsDrafts({
     setLockedClaimNumber(claim.claimNumber ?? claim.reference);
     setEditingId(claim.id);
     setShowForm(true);
+    setError(null);
+    setFieldErrors({});
     setPendingFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setForm({
@@ -230,8 +288,7 @@ export function MemberClaimsDrafts({
       };
       const result = await updateClaimRevisionAction(editingId, revisionPayload);
       if (result.error) {
-        setError(result.error);
-        showError(result.error);
+        applyActionValidationErrors(result);
         return null;
       }
       return editingId;
@@ -241,8 +298,7 @@ export function MemberClaimsDrafts({
     if (editingId) {
       const result = await updateClaimDraftAction(editingId, payload);
       if (result.error) {
-        setError(result.error);
-        showError(result.error);
+        applyActionValidationErrors(result);
         return null;
       }
       return editingId;
@@ -250,9 +306,13 @@ export function MemberClaimsDrafts({
 
     const result = await createClaimDraftAction(payload);
     if (result.error || !result.claimId) {
-      const message = result.error ?? "Failed to save draft.";
-      setError(message);
-      showError(message);
+      if (result.error) {
+        applyActionValidationErrors(result);
+      } else {
+        const message = "Failed to save draft.";
+        setError(message);
+        showError(message);
+      }
       return null;
     }
     setEditingId(result.claimId);
@@ -264,8 +324,12 @@ export function MemberClaimsDrafts({
 
     const validationError = validateClaimAttachment(pendingFile);
     if (validationError) {
-      setError(validationError);
+      setFieldErrors((current) => ({
+        ...current,
+        attachment: validationError,
+      }));
       showError(validationError);
+      focusClaimFormField("attachment");
       return null;
     }
 
@@ -298,6 +362,7 @@ export function MemberClaimsDrafts({
     startTransition(async () => {
       try {
       setError(null);
+      setFieldErrors({});
       const claimId = await ensureDraftSaved();
       if (!claimId) return;
 
@@ -319,8 +384,7 @@ export function MemberClaimsDrafts({
                 attachment.attachmentContentType ?? form.attachmentContentType,
             });
             if (update.error) {
-              setError(update.error);
-              showError(update.error);
+              applyActionValidationErrors(update);
               return;
             }
           } else {
@@ -329,8 +393,7 @@ export function MemberClaimsDrafts({
               buildPayload(attachment),
             );
             if (update.error) {
-              setError(update.error);
-              showError(update.error);
+              applyActionValidationErrors(update);
               return;
             }
           }
@@ -354,6 +417,7 @@ export function MemberClaimsDrafts({
     startTransition(async () => {
       try {
       setError(null);
+      setFieldErrors({});
 
       if (!eligibilityResult?.eligible) {
         const message =
@@ -364,9 +428,11 @@ export function MemberClaimsDrafts({
       }
 
       if (!form.incidentDate.trim()) {
-        const message = "Incident date is required before submitting.";
-        setError(message);
-        showError(message);
+        const mapped = {
+          incidentDate: "Incident date is required before submitting.",
+        };
+        setFieldErrors(mapped);
+        focusClaimFormField("incidentDate");
         return;
       }
 
@@ -391,8 +457,7 @@ export function MemberClaimsDrafts({
                 attachment.attachmentContentType ?? form.attachmentContentType,
             });
             if (update.error) {
-              setError(update.error);
-              showError(update.error);
+              applyActionValidationErrors(update);
               return;
             }
           } else {
@@ -401,8 +466,7 @@ export function MemberClaimsDrafts({
               buildPayload(attachment),
             );
             if (update.error) {
-              setError(update.error);
-              showError(update.error);
+              applyActionValidationErrors(update);
               return;
             }
           }
@@ -469,6 +533,8 @@ export function MemberClaimsDrafts({
             setLockedClaimNumber(null);
             setForm(emptyForm(claimTypes));
             setPendingFile(null);
+            setError(null);
+            setFieldErrors({});
             setShowForm(true);
           }}
         >
@@ -522,17 +588,22 @@ export function MemberClaimsDrafts({
             />
 
             <div className="space-y-2">
-              <Label htmlFor="claimTypeCode">Claim Type</Label>
+              <Label htmlFor="claimTypeCode" required>
+                Claim Type
+              </Label>
               <select
                 id="claimTypeCode"
                 className="h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm disabled:opacity-60"
                 value={form.claimTypeCode}
                 disabled={isFormBusy || formMode === "revision"}
+                aria-invalid={Boolean(fieldErrorMessage("claimTypeCode"))}
+                aria-describedby={
+                  fieldErrorMessage("claimTypeCode")
+                    ? "claimTypeCode-error"
+                    : undefined
+                }
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    claimTypeCode: event.target.value,
-                  }))
+                  updateFormField("claimTypeCode", event.target.value)
                 }
               >
                 {claimTypes.map((type) => (
@@ -541,7 +612,11 @@ export function MemberClaimsDrafts({
                   </option>
                 ))}
               </select>
-              {formMode === "revision" ? (
+              {fieldErrorMessage("claimTypeCode") ? (
+                <p id="claimTypeCode-error" className="text-sm text-rose-700">
+                  {fieldErrorMessage("claimTypeCode")}
+                </p>
+              ) : formMode === "revision" ? (
                 <p className="text-xs text-muted-foreground">
                   Claim type cannot be changed after submission.
                 </p>
@@ -549,47 +624,84 @@ export function MemberClaimsDrafts({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="incidentDate">Incident Date</Label>
+              <Label htmlFor="incidentDate" required={formMode === "revision"}>
+                Incident Date
+              </Label>
               <Input
                 id="incidentDate"
                 type="date"
                 value={form.incidentDate}
                 disabled={isFormBusy}
+                aria-invalid={Boolean(fieldErrorMessage("incidentDate"))}
+                aria-describedby={
+                  fieldErrorMessage("incidentDate")
+                    ? "incidentDate-error"
+                    : "incidentDate-help"
+                }
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    incidentDate: event.target.value,
-                  }))
+                  updateFormField("incidentDate", event.target.value)
                 }
               />
+              {fieldErrorMessage("incidentDate") ? (
+                <p id="incidentDate-error" className="text-sm text-rose-700">
+                  {fieldErrorMessage("incidentDate")}
+                </p>
+              ) : (
+                <p id="incidentDate-help" className="text-xs text-muted-foreground">
+                  {formMode === "revision"
+                    ? "Required for revision and resubmission."
+                    : "Required when submitting a claim. Optional when saving a draft."}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="title">Short Title</Label>
+              <Label htmlFor="title" required>
+                Short Title
+              </Label>
               <Input
                 id="title"
                 value={form.title}
                 disabled={isFormBusy}
+                aria-invalid={Boolean(fieldErrorMessage("title"))}
+                aria-describedby={
+                  fieldErrorMessage("title") ? "title-error" : undefined
+                }
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, title: event.target.value }))
+                  updateFormField("title", event.target.value)
                 }
               />
+              {fieldErrorMessage("title") ? (
+                <p id="title-error" className="text-sm text-rose-700">
+                  {fieldErrorMessage("title")}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="description">Description</Label>
+              <Label htmlFor="description" required>
+                Description
+              </Label>
               <textarea
                 id="description"
                 className="min-h-28 w-full rounded-lg border border-input bg-transparent px-2.5 py-2 text-sm"
                 value={form.description}
                 disabled={isFormBusy}
+                aria-invalid={Boolean(fieldErrorMessage("description"))}
+                aria-describedby={
+                  fieldErrorMessage("description")
+                    ? "description-error"
+                    : undefined
+                }
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    description: event.target.value,
-                  }))
+                  updateFormField("description", event.target.value)
                 }
               />
+              {fieldErrorMessage("description") ? (
+                <p id="description-error" className="text-sm text-rose-700">
+                  {fieldErrorMessage("description")}
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -600,6 +712,16 @@ export function MemberClaimsDrafts({
                 type="file"
                 accept={CLAIM_ATTACHMENT.ACCEPTED_MIME_TYPES.join(",")}
                 disabled={isFormBusy}
+                aria-invalid={Boolean(
+                  fieldErrorMessage("attachment") ||
+                    fieldErrorMessage("attachmentUrl"),
+                )}
+                aria-describedby={
+                  fieldErrorMessage("attachment") ||
+                  fieldErrorMessage("attachmentUrl")
+                    ? "attachment-error"
+                    : "attachment-help"
+                }
                 onChange={(event) => {
                   const file = event.target.files?.[0] ?? null;
                   if (!file) {
@@ -608,21 +730,36 @@ export function MemberClaimsDrafts({
                   }
                   const validationError = validateClaimAttachment(file);
                   if (validationError) {
+                    setFieldErrors((current) => ({
+                      ...current,
+                      attachment: validationError,
+                    }));
                     showError(validationError);
                     event.target.value = "";
                     setPendingFile(null);
+                    focusClaimFormField("attachment");
                     return;
                   }
+                  clearFieldError("attachment");
+                  clearFieldError("attachmentUrl");
                   setPendingFile(file);
                 }}
               />
-              <p className="text-xs text-muted-foreground">
-                PDF or image, max 5 MB.
-                {form.attachmentFileName
-                  ? ` Current: ${form.attachmentFileName}`
-                  : ""}
-                {pendingFile ? ` Selected: ${pendingFile.name}` : ""}
-              </p>
+              {fieldErrorMessage("attachment") ||
+              fieldErrorMessage("attachmentUrl") ? (
+                <p id="attachment-error" className="text-sm text-rose-700">
+                  {fieldErrorMessage("attachment") ??
+                    fieldErrorMessage("attachmentUrl")}
+                </p>
+              ) : (
+                <p id="attachment-help" className="text-xs text-muted-foreground">
+                  PDF or image, max 5 MB.
+                  {form.attachmentFileName
+                    ? ` Current: ${form.attachmentFileName}`
+                    : ""}
+                  {pendingFile ? ` Selected: ${pendingFile.name}` : ""}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -635,19 +772,38 @@ export function MemberClaimsDrafts({
                 placeholder="Evidence has been sent to the Welfare Secretary via WhatsApp."
                 value={form.whatsappEvidenceNote}
                 disabled={isFormBusy}
+                aria-invalid={Boolean(fieldErrorMessage("whatsappEvidenceNote"))}
+                aria-describedby={
+                  fieldErrorMessage("whatsappEvidenceNote")
+                    ? "whatsappEvidenceNote-error"
+                    : "whatsappEvidenceNote-help"
+                }
                 onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    whatsappEvidenceNote: event.target.value,
-                  }))
+                  updateFormField("whatsappEvidenceNote", event.target.value)
                 }
               />
-              <p className="text-xs text-muted-foreground">
-                Note only — the system does not send WhatsApp messages.
-              </p>
+              {fieldErrorMessage("whatsappEvidenceNote") ? (
+                <p
+                  id="whatsappEvidenceNote-error"
+                  className="text-sm text-rose-700"
+                >
+                  {fieldErrorMessage("whatsappEvidenceNote")}
+                </p>
+              ) : (
+                <p
+                  id="whatsappEvidenceNote-help"
+                  className="text-xs text-muted-foreground"
+                >
+                  Note only — the system does not send WhatsApp messages.
+                </p>
+              )}
             </div>
 
-            {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+            {error ? (
+              <p className="text-sm text-rose-700" role="alert">
+                {error}
+              </p>
+            ) : null}
 
             {!canSubmit && !eligibilityLoading ? (
               <p className="text-sm text-amber-900">

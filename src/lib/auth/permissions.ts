@@ -50,6 +50,7 @@ export const Permission = {
   EDIT_WELFARE_SUPPORT: "edit_welfare_support",
   VIEW_WELFARE_SUPPORT: "view_welfare_support",
   VIEW_OWN_WELFARE_SUPPORT: "view_own_welfare_support",
+  MANAGE_WELFARE_SUPPORT_TYPES: "manage_welfare_support_types",
 
   // Membership claims
   CREATE_CLAIM: "create_claim",
@@ -113,6 +114,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     Permission.CREATE_WELFARE_SUPPORT,
     Permission.EDIT_WELFARE_SUPPORT,
     Permission.VIEW_WELFARE_SUPPORT,
+    Permission.MANAGE_WELFARE_SUPPORT_TYPES,
     Permission.VIEW_ALL_CLAIMS,
     Permission.REVIEW_CLAIMS,
     Permission.ASSIGN_CLAIMS,

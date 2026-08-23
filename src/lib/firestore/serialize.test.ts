@@ -29,4 +29,34 @@ describe("serializeFirestoreDoc", () => {
     expect(serialized.dateOfBirth).toBe("1990-05-01T00:00:00.000Z");
     expect(serializeTimestampValue(createdAt)).toBe("2026-01-15T10:00:00.000Z");
   });
+
+  it("preserves Date and valid ISO strings", () => {
+    expect(
+      serializeTimestampValue(new Date("2026-08-01T08:30:00.000Z")),
+    ).toBe("2026-08-01T08:30:00.000Z");
+    expect(serializeTimestampValue("2026-08-01T08:30:00.000Z")).toBe(
+      "2026-08-01T08:30:00.000Z",
+    );
+    expect(serializeTimestampValue(null)).toBeNull();
+    expect(serializeTimestampValue("not-a-date")).toBeNull();
+  });
+
+  it("preserves nested auditHistory createdAt ISO strings", () => {
+    const serialized = serializeFirestoreDoc("claim-1", {
+      title: "Child Birth",
+      auditHistory: [
+        {
+          id: "cae_1",
+          type: "CLAIM_CREATED",
+          title: "Claim Created",
+          createdAt: "2026-08-20T15:00:00.000Z",
+          reason: null,
+          metadata: {},
+        },
+      ],
+    });
+
+    const history = serialized.auditHistory as Array<{ createdAt: string }>;
+    expect(history[0].createdAt).toBe("2026-08-20T15:00:00.000Z");
+  });
 });

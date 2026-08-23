@@ -42,7 +42,7 @@ export type MiddlewareAuthDecision =
 
 /**
  * Pure routing decision for middleware — session presence only.
- * Role checks remain in server components / RequireAdmin (Phase 5B).
+ * Linked-member checks for executives happen in server components.
  */
 export function resolveMiddlewareAuth(
   pathname: string,

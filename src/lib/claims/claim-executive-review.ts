@@ -28,6 +28,7 @@ import {
   ClaimLifecycleAuditType,
 } from "@/lib/claims/claim-lifecycle-audit";
 import { getClaimById } from "@/lib/claims/claim-repository";
+import { getClaimTypeConfigByCode } from "@/lib/claims/claim-type-repository";
 import { getAdminDb } from "@/lib/firebase/admin";
 import {
   notifyClaimApproved,
@@ -43,11 +44,17 @@ import type {
   AddExecutiveCommentInput,
   ApproveClaimInput,
   AssignClaimExecutiveInput,
+  RecommendClaimInput,
   RejectClaimInput,
 } from "@/lib/validators/claims";
-import { ClaimCommentVisibility, ClaimStatus, UserRole } from "@/types/enums";
+import {
+  ClaimAmountMode,
+  ClaimCommentVisibility,
+  ClaimStatus,
+  UserRole,
+} from "@/types/enums";
 import type { CurrentUser } from "@/types/auth";
-import type { ClaimExecutiveComment } from "@/types/claims";
+import type { ClaimExecutiveComment, ClaimProgressionSnapshot } from "@/types/claims";
 
 export interface ClaimExecutiveOption {
   id: string;
@@ -240,6 +247,7 @@ export async function addExecutiveComment(
 export async function recommendClaim(
   claimId: string,
   actor: CurrentUser,
+  input: Omit<RecommendClaimInput, "claimId"> = {},
 ): Promise<void> {
   requireReviewPermission(actor);
 
@@ -251,12 +259,48 @@ export async function recommendClaim(
     throw new Error("Only claims under review can be recommended.");
   }
 
+  const claimType = await getClaimTypeConfigByCode(existing.claimTypeCode);
+  const isManual = claimType?.amountMode === ClaimAmountMode.MANUAL;
+
+  let recommendedAmount: number | null =
+    existing.recommendedAmount ??
+    existing.progressionSnapshot?.recommendedAmount ??
+    null;
+  let claimCeiling: number | null =
+    existing.claimCeiling ?? existing.progressionSnapshot?.claimCeiling ?? null;
+  let progressionSnapshot: ClaimProgressionSnapshot | null | undefined =
+    existing.progressionSnapshot;
+
+  if (isManual) {
+    const amount = input.recommendedAmount;
+    if (typeof amount !== "number" || !(amount > 0)) {
+      throw new Error(
+        "Enter a positive recommended benefit amount for this Executive Decision claim.",
+      );
+    }
+    recommendedAmount = Math.round(amount * 100) / 100;
+    claimCeiling = null;
+    if (progressionSnapshot) {
+      progressionSnapshot = {
+        ...progressionSnapshot,
+        recommendedAmount,
+        claimCeiling: null,
+      };
+    }
+  }
+
+  const reason = input.reason?.trim() || null;
+
   const recommendEvent = buildClaimLifecycleAuditEvent({
     type: ClaimLifecycleAuditType.CLAIM_RECOMMENDED,
     actor,
+    reason,
     metadata: {
       claimNumber: existing.claimNumber,
       previousStatus: existing.status,
+      amountMode: claimType?.amountMode ?? null,
+      recommendedAmount,
+      claimCeiling,
     },
   });
   const auditHistory = appendClaimLifecycleAuditHistory(
@@ -270,6 +314,11 @@ export async function recommendClaim(
     recommendedById: actor.uid,
     recommendedByName: actor.fullName,
     recommendedAt: FieldValue.serverTimestamp(),
+    recommendedAmount,
+    claimCeiling,
+    ...(progressionSnapshot !== undefined
+      ? { progressionSnapshot: progressionSnapshot ?? null }
+      : {}),
     auditHistory,
     updatedBy: actor.uid,
     updatedByName: actor.fullName,
@@ -287,6 +336,8 @@ export async function recommendClaim(
     metadata: {
       claimNumber: existing.claimNumber,
       memberId: existing.memberId,
+      recommendedAmount,
+      amountMode: claimType?.amountMode ?? null,
     },
   });
 }
@@ -308,6 +359,9 @@ export async function approveClaim(
     );
   }
 
+  const claimType = await getClaimTypeConfigByCode(existing.claimTypeCode);
+  const isManual = claimType?.amountMode === ClaimAmountMode.MANUAL;
+
   const recommendedAmount =
     existing.recommendedAmount ??
     existing.progressionSnapshot?.recommendedAmount ??
@@ -317,23 +371,55 @@ export async function approveClaim(
     existing.progressionSnapshot?.claimCeiling ??
     null;
 
-  if (
-    typeof recommendedAmount !== "number" ||
-    typeof claimCeiling !== "number"
-  ) {
-    throw new Error(
-      "This claim is missing a progression recommendation. Return it for revision so the member can resubmit.",
-    );
-  }
+  let amounts: {
+    decision: ClaimApprovalDecisionType;
+    recommendedAmount: number;
+    claimCeiling: number | null;
+    approvedAmount: number;
+    bonusAmount: number;
+    finalAmount: number;
+    overrideReason: string | null;
+  };
 
-  const amounts = resolveExecutiveApprovalAmounts({
-    decision: input.decision as ClaimApprovalDecisionType,
-    recommendedAmount,
-    claimCeiling,
-    approvedAmount: input.approvedAmount,
-    bonusAmount: input.bonusAmount,
-    overrideReason: input.overrideReason,
-  });
+  if (isManual) {
+    if (typeof recommendedAmount !== "number" || !(recommendedAmount > 0)) {
+      throw new Error(
+        "This claim requires an executive benefit amount before it can be approved.",
+      );
+    }
+    if (input.decision !== ClaimApprovalDecision.RECOMMENDED) {
+      throw new Error(
+        "Executive Decision claims are approved using the recommended benefit amount.",
+      );
+    }
+    amounts = {
+      decision: ClaimApprovalDecision.RECOMMENDED,
+      recommendedAmount,
+      claimCeiling: null,
+      approvedAmount: recommendedAmount,
+      bonusAmount: 0,
+      finalAmount: recommendedAmount,
+      overrideReason: null,
+    };
+  } else {
+    if (
+      typeof recommendedAmount !== "number" ||
+      typeof claimCeiling !== "number"
+    ) {
+      throw new Error(
+        "This claim is missing a progression recommendation. Return it for revision so the member can resubmit.",
+      );
+    }
+
+    amounts = resolveExecutiveApprovalAmounts({
+      decision: input.decision as ClaimApprovalDecisionType,
+      recommendedAmount,
+      claimCeiling,
+      approvedAmount: input.approvedAmount,
+      bonusAmount: input.bonusAmount,
+      overrideReason: input.overrideReason,
+    });
+  }
 
   const approveEvent = buildClaimLifecycleAuditEvent({
     type: ClaimLifecycleAuditType.CLAIM_APPROVED,
@@ -350,6 +436,7 @@ export async function approveClaim(
       approvedBenefitAmount: amounts.finalAmount,
       claimCeiling: amounts.claimCeiling,
       overrideReason: amounts.overrideReason,
+      amountMode: claimType?.amountMode ?? null,
     },
   });
   let auditHistory = appendClaimLifecycleAuditHistory(
@@ -421,29 +508,12 @@ export async function approveClaim(
       memberId: existing.memberId,
       approvedBenefitAmount: amounts.finalAmount,
       finalAmount: amounts.finalAmount,
+      status: ClaimStatus.AWAITING_PAYMENT,
     },
   });
 
-  await notifyClaimApproved(
-    {
-      id: claimId,
-      claimNumber: existing.claimNumber,
-      memberId: existing.memberId,
-      memberName: existing.memberName,
-      serviceNumber: existing.serviceNumber,
-    },
-    actor,
-  );
-  await notifyClaimSentToFinance(
-    {
-      id: claimId,
-      claimNumber: existing.claimNumber,
-      memberId: existing.memberId,
-      memberName: existing.memberName,
-      serviceNumber: existing.serviceNumber,
-    },
-    actor,
-  );
+  await notifyClaimApproved(existing, actor);
+  await notifyClaimSentToFinance(existing, actor);
 }
 
 // Keep ClaimApprovalDecision export available for UI

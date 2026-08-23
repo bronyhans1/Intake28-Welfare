@@ -103,6 +103,16 @@ describe("ActivityTimeline data helpers", () => {
     );
   });
 
+  it("never renders Unix epoch for null or invalid timestamps", () => {
+    expect(formatTimelineDateTime(null)).toBe("—");
+    expect(formatTimelineDateTime(undefined)).toBe("—");
+    expect(formatTimelineDateTime("")).toBe("—");
+    expect(formatTimelineDateTime("not-a-date")).toBe("—");
+    expect(formatTimelineDateTime(null as unknown as string)).not.toMatch(
+      /1970/,
+    );
+  });
+
   it("handles empty history for member and admin consumers", () => {
     expect(claimAuditHistoryToTimelineEvents([])).toEqual([]);
     expect(claimAuditHistoryToTimelineEvents(null)).toEqual([]);

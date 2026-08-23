@@ -1,7 +1,7 @@
 import { fetchAllContributionsForReport } from "@/lib/reports/data";
 import { getReceiptByPaymentReference, listReceipts } from "@/lib/receipts/repository";
 import { getPaymentByReference } from "@/lib/payments/repository";
-import { PaymentStatus } from "@/types/enums";
+import { PaymentStatus, PaymentType } from "@/types/enums";
 import type { SerializedContribution } from "@/types/contribution";
 import type { SerializedPayment } from "@/types/payment";
 import type { SerializedReceipt } from "@/types/receipt";
@@ -56,7 +56,11 @@ export async function getReconciliationSummary(): Promise<ReconciliationSummary>
     receipts.map((item) => [item.paymentReference, item]),
   );
 
-  const paymentsMissingContributions = successPayments.filter(
+  const contributionPayments = successPayments.filter(
+    (payment) => payment.paymentType !== PaymentType.CLAIM_PAYMENT,
+  );
+
+  const paymentsMissingContributions = contributionPayments.filter(
     (payment) => !contributionByReference.has(payment.reference),
   );
 

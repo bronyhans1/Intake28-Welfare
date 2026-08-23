@@ -6,7 +6,7 @@ const mockGetMonthlyDuesPaymentGuardStatus = vi.fn();
 const mockListContributions = vi.fn();
 const mockGetContributionStats = vi.fn();
 const mockListPayments = vi.fn();
-const mockListWelfareSupport = vi.fn();
+const mockListMemberWelfareHistory = vi.fn();
 const mockGetReceiptStats = vi.fn();
 
 vi.mock("@/lib/payments/monthly-dues-guard", () => ({
@@ -23,8 +23,9 @@ vi.mock("@/lib/payments/repository", () => ({
   listPayments: (...args: unknown[]) => mockListPayments(...args),
 }));
 
-vi.mock("@/lib/welfare/repository", () => ({
-  listWelfareSupport: (...args: unknown[]) => mockListWelfareSupport(...args),
+vi.mock("@/lib/welfare/history", () => ({
+  listMemberWelfareHistory: (...args: unknown[]) =>
+    mockListMemberWelfareHistory(...args),
 }));
 
 vi.mock("@/lib/receipts/repository", () => ({
@@ -35,7 +36,7 @@ const executiveActor = {
   uid: "admin-1",
   fullName: "Admin User",
   role: UserRole.ADMIN,
-  serviceNumber: "IS/00001",
+  serviceNumber: "IS/10002",
   profileCompleted: true,
   profileCompletionPercentage: 100,
 };
@@ -68,7 +69,21 @@ describe("getMemberMembershipStatus", () => {
       total: 3,
       records: [{ paidAt: "2026-06-17T12:00:00.000Z", createdAt: "2026-06-17T11:00:00.000Z" }],
     });
-    mockListWelfareSupport.mockResolvedValue({ total: 1, records: [] });
+    mockListMemberWelfareHistory.mockResolvedValue({
+      total: 1,
+      entries: [
+        {
+          id: "cp:pay-1",
+          source: "claim_payment",
+          benefitTypeLabel: "Child Birth",
+          amount: 1250,
+          statusLabel: "Paid",
+        },
+      ],
+      page: 1,
+      pageSize: 1,
+      totalPages: 1,
+    });
     mockGetReceiptStats.mockResolvedValue({ issuedReceipts: 2, cancelledReceipts: 0 });
   });
 
@@ -76,25 +91,39 @@ describe("getMemberMembershipStatus", () => {
     const status = await getMemberMembershipStatus("admin-1", executiveActor);
 
     expect(mockGetMonthlyDuesPaymentGuardStatus).toHaveBeenCalledWith("admin-1");
-    expect(mockListContributions).toHaveBeenCalledWith({
-      memberId: "admin-1",
-      page: 1,
-      pageSize: 1,
-    });
-    expect(mockGetContributionStats).toHaveBeenCalledWith({ memberId: "admin-1" });
-    expect(mockListPayments).toHaveBeenCalledWith(
-      { page: 1, pageSize: 1, memberId: "admin-1" },
+    expect(mockListMemberWelfareHistory).toHaveBeenCalledWith(
       executiveActor,
+      { page: 1, pageSize: 1 },
     );
-    expect(mockGetReceiptStats).toHaveBeenCalledWith({ memberId: "admin-1" });
-    expect(mockListWelfareSupport).toHaveBeenCalledWith({
-      memberId: "admin-1",
-      page: 1,
-      pageSize: 1,
-    });
     expect(status.monthlyDuesPaid).toBe(true);
     expect(status.paymentCount).toBe(3);
     expect(status.receiptCount).toBe(2);
+    expect(status.welfareSupportCount).toBe(1);
+  });
+
+  it("includes paid claim payments in welfare support count", async () => {
+    const status = await getMemberMembershipStatus("admin-1", executiveActor);
+
+    expect(status.welfareSupportCount).toBe(1);
+  });
+
+  it("rejects another member id", async () => {
+    await expect(
+      getMemberMembershipStatus("other-member", executiveActor),
+    ).rejects.toThrow("Forbidden: member scope violation.");
+  });
+
+  it("does not show zero welfare count when unified history has claim payment", async () => {
+    mockListMemberWelfareHistory.mockResolvedValue({
+      total: 1,
+      entries: [],
+      page: 1,
+      pageSize: 1,
+      totalPages: 1,
+    });
+
+    const status = await getMemberMembershipStatus("admin-1", executiveActor);
+
     expect(status.welfareSupportCount).toBe(1);
   });
 });

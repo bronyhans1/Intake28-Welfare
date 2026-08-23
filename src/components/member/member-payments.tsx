@@ -74,6 +74,7 @@ export function PaymentVerificationBanner() {
   const router = useRouter();
   const reference = searchParams.get("reference");
   const verified = searchParams.get("verified");
+  const paymentError = searchParams.get("error");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -86,6 +87,20 @@ export function PaymentVerificationBanner() {
       setMessage("Payment verified successfully.");
     }
   }, [verified, reference]);
+
+  useEffect(() => {
+    if (!paymentError) return;
+
+    const messages: Record<string, string> = {
+      verification_failed:
+        "We could not verify your payment. Check your payment history or contact support if you were charged.",
+      unavailable: "Payment verification is temporarily unavailable. Please try again later.",
+      missing_reference: "Payment reference was missing. Check your payment history.",
+    };
+
+    setError(messages[paymentError] ?? "Payment verification failed.");
+    router.replace("/payments");
+  }, [paymentError, router]);
 
   useEffect(() => {
     if (!reference) return;

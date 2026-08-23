@@ -58,13 +58,22 @@ vi.mock("@/lib/claims/eligibility-service", () => ({
   evaluateMemberEligibilityForClaim: vi.fn(),
 }));
 
+const mockGetClaimTypeConfigByCode = vi.fn(async () => ({
+  code: "medical",
+  displayName: "Medical",
+  amountMode: "fixed",
+  fixedAmount: 500,
+}));
+
 vi.mock("@/lib/claims/claim-type-repository", () => ({
-  getClaimTypeConfigByCode: vi.fn(async () => ({
-    code: "medical",
-    displayName: "Medical",
-    amountMode: "fixed",
-    fixedAmount: 500,
-  })),
+  getClaimTypeConfigByCode: (...args: unknown[]) =>
+    mockGetClaimTypeConfigByCode(...args),
+}));
+
+vi.mock("@/lib/notifications/claim-events", () => ({
+  notifyClaimApproved: vi.fn(),
+  notifyClaimRejected: vi.fn(),
+  notifyClaimSentToFinance: vi.fn(),
 }));
 
 // Import after mocks so repository/admin wiring uses the stubs above.
@@ -306,6 +315,12 @@ describe("Phase 5 executive review repository actions", () => {
     mockCollection.mockReturnValue({ doc: mockDoc });
     mockUpdate.mockResolvedValue(undefined);
     mockCreateAuditLog.mockResolvedValue(undefined);
+    mockGetClaimTypeConfigByCode.mockResolvedValue({
+      code: "medical",
+      displayName: "Medical",
+      amountMode: "fixed",
+      fixedAmount: 500,
+    });
   });
 
   it(
@@ -470,6 +485,172 @@ describe("Phase 5 executive review repository actions", () => {
       ClaimStatus.AWAITING_PAYMENT,
     );
     expect(mockUpdate.mock.calls[0][0].approvedBenefitAmount).toBe(500);
+  });
+});
+
+describe("Phase 5 Executive Decision (manual) recommendation and approval", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDoc.mockReturnValue({ get: mockGet, update: mockUpdate });
+    mockCollection.mockReturnValue({ doc: mockDoc });
+    mockUpdate.mockResolvedValue(undefined);
+    mockCreateAuditLog.mockResolvedValue(undefined);
+    mockGetClaimTypeConfigByCode.mockResolvedValue({
+      code: "child_birth",
+      displayName: "Child Birth",
+      amountMode: "manual",
+      fixedAmount: null,
+    });
+  });
+
+  it("requires an executive amount when recommending a manual claim", async () => {
+    mockClaimDoc({
+      ...submittedData,
+      claimTypeCode: "child_birth",
+      claimTypeDisplayName: "Child Birth",
+      status: ClaimStatus.UNDER_REVIEW,
+      recommendedAmount: null,
+      claimCeiling: null,
+      progressionSnapshot: {
+        ...submittedData.progressionSnapshot,
+        recommendedAmount: null,
+        claimCeiling: null,
+      },
+    });
+
+    await expect(
+      recommendClaim("claim-1", executiveActor as never, {}),
+    ).rejects.toThrow(/recommended benefit amount/i);
+  });
+
+  it("saves executive recommendedAmount without requiring claimCeiling", async () => {
+    mockClaimDoc({
+      ...submittedData,
+      claimTypeCode: "child_birth",
+      claimTypeDisplayName: "Child Birth",
+      status: ClaimStatus.UNDER_REVIEW,
+      recommendedAmount: null,
+      claimCeiling: null,
+      progressionSnapshot: {
+        ...submittedData.progressionSnapshot,
+        recommendedAmount: null,
+        claimCeiling: null,
+      },
+    });
+
+    await recommendClaim("claim-1", executiveActor as never, {
+      recommendedAmount: 750,
+      reason: "Approved hardship amount",
+    });
+
+    const payload = mockUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.status).toBe(ClaimStatus.RECOMMENDED);
+    expect(payload.recommendedAmount).toBe(750);
+    expect(payload.claimCeiling).toBeNull();
+    const snapshot = payload.progressionSnapshot as {
+      recommendedAmount: number | null;
+      claimCeiling: number | null;
+    };
+    expect(snapshot.recommendedAmount).toBe(750);
+    expect(snapshot.claimCeiling).toBeNull();
+  });
+
+  it("approves a manual claim using the executive-selected amount without ceiling math", async () => {
+    mockClaimDoc({
+      ...submittedData,
+      claimTypeCode: "child_birth",
+      claimTypeDisplayName: "Child Birth",
+      status: ClaimStatus.RECOMMENDED,
+      recommendedAmount: 750,
+      claimCeiling: null,
+      progressionSnapshot: {
+        ...submittedData.progressionSnapshot,
+        recommendedAmount: 750,
+        claimCeiling: null,
+      },
+    });
+
+    await approveClaim(
+      "claim-1",
+      { decision: "recommended" },
+      executiveActor as never,
+    );
+
+    const payload = mockUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(payload.status).toBe(ClaimStatus.AWAITING_PAYMENT);
+    expect(payload.approvedBenefitAmount).toBe(750);
+    expect(payload.finalAmount).toBe(750);
+    expect(payload.approvedAmount).toBe(750);
+    expect(payload.claimCeiling).toBeNull();
+    expect(payload.bonusAmount).toBe(0);
+  });
+
+  it("blocks manual approval when no executive amount exists", async () => {
+    mockClaimDoc({
+      ...submittedData,
+      claimTypeCode: "child_birth",
+      status: ClaimStatus.UNDER_REVIEW,
+      recommendedAmount: null,
+      claimCeiling: null,
+      progressionSnapshot: {
+        ...submittedData.progressionSnapshot,
+        recommendedAmount: null,
+        claimCeiling: null,
+      },
+    });
+
+    await expect(
+      approveClaim(
+        "claim-1",
+        { decision: "recommended" },
+        executiveActor as never,
+      ),
+    ).rejects.toThrow(/executive benefit amount/i);
+  });
+
+  it("rejects ceiling-based decisions for manual claims", async () => {
+    mockClaimDoc({
+      ...submittedData,
+      claimTypeCode: "child_birth",
+      status: ClaimStatus.RECOMMENDED,
+      recommendedAmount: 750,
+      claimCeiling: null,
+    });
+
+    await expect(
+      approveClaim(
+        "claim-1",
+        { decision: "full_ceiling", overrideReason: "n/a" },
+        executiveActor as never,
+      ),
+    ).rejects.toThrow(/recommended benefit amount/i);
+  });
+
+  it("preserves fixed-claim ceiling validation messaging", async () => {
+    mockGetClaimTypeConfigByCode.mockResolvedValue({
+      code: "medical",
+      displayName: "Medical",
+      amountMode: "fixed",
+      fixedAmount: 500,
+    });
+    mockClaimDoc({
+      ...submittedData,
+      recommendedAmount: null,
+      claimCeiling: null,
+      progressionSnapshot: {
+        ...submittedData.progressionSnapshot,
+        recommendedAmount: null,
+        claimCeiling: null,
+      },
+    });
+
+    await expect(
+      approveClaim(
+        "claim-1",
+        { decision: "recommended" },
+        executiveActor as never,
+      ),
+    ).rejects.toThrow(/progression recommendation/i);
   });
 });
 

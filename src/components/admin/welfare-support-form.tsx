@@ -4,10 +4,7 @@ import { useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
-import {
-  createWelfareSupportAction,
-  updateWelfareSupportAction,
-} from "@/actions/welfare-support";
+import { updateWelfareSupportAction } from "@/actions/welfare-support";
 import { AdminBackLink } from "@/components/admin/admin-page-shell";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,19 +23,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  createWelfareSupportSchema,
   updateWelfareSupportSchema,
-  type CreateWelfareSupportInput,
   type UpdateWelfareSupportInput,
 } from "@/lib/validators/welfare-support";
-import { WELFARE_SUPPORT_TYPE_LABELS, WelfareSupportType } from "@/types/enums";
 import type { SerializedWelfareSupport } from "@/types/welfare-support";
+import type { WelfareSupportTypeOption } from "@/types/welfare-support-type";
 
 interface EditWelfareSupportFormProps {
   record: SerializedWelfareSupport;
+  supportTypes: WelfareSupportTypeOption[];
 }
 
-export function EditWelfareSupportForm({ record }: EditWelfareSupportFormProps) {
+export function EditWelfareSupportForm({
+  record,
+  supportTypes,
+}: EditWelfareSupportFormProps) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -81,29 +80,34 @@ export function EditWelfareSupportForm({ record }: EditWelfareSupportFormProps) 
 
                 <Field data-invalid={!!errors.supportType}>
                   <FieldLabel>Support Type</FieldLabel>
-                  <Select
-                    value={watch("supportType")}
-                    onValueChange={(value: string | null) => {
-                      if (value)
-                        setValue("supportType", value as WelfareSupportType, {
-                          shouldValidate: true,
-                        });
-                    }}
-                    disabled={isPending}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select support type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(
-                        Object.entries(WELFARE_SUPPORT_TYPE_LABELS) as [WelfareSupportType, string][]
-                      ).map(([type, label]) => (
-                        <SelectItem key={type} value={type}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {supportTypes.length === 0 ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                      No support types are available for editing.
+                    </p>
+                  ) : (
+                    <Select
+                      value={watch("supportType")}
+                      onValueChange={(value: string | null) => {
+                        if (value)
+                          setValue("supportType", value, {
+                            shouldValidate: true,
+                          });
+                      }}
+                      disabled={isPending}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder="Select support type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {supportTypes.map((type) => (
+                          <SelectItem key={type.code} value={type.code}>
+                            {type.displayName}
+                            {!type.active ? " (inactive)" : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
                   <FieldError errors={[errors.supportType]} />
                 </Field>
 
@@ -145,7 +149,7 @@ export function EditWelfareSupportForm({ record }: EditWelfareSupportFormProps) 
               <Button
                 type="submit"
                 className="h-11 bg-[#166534] hover:bg-[#14532d]"
-                disabled={isPending}
+                disabled={isPending || supportTypes.length === 0}
               >
                 {isPending ? (
                   <>

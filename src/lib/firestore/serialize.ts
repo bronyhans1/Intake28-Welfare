@@ -54,7 +54,15 @@ export function serializeTimestampValue(value: unknown): string | null {
   }
 
   if (value instanceof Date) {
-    return value.toISOString();
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  // Nested lifecycle / comment timestamps are often already ISO strings.
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = new Date(trimmed);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
 
   return null;

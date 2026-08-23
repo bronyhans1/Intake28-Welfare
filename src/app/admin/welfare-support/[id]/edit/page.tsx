@@ -3,11 +3,13 @@ import { AdminBreadcrumb, AdminPageShell } from "@/components/admin/admin-page-s
 import { EditWelfareSupportForm } from "@/components/admin/welfare-support-form";
 import { createPageMetadata } from "@/components/shared/page-placeholder";
 import { getCurrentUserFromSession } from "@/lib/auth/session";
-import {
-  canManageWelfareSupport,
-  getWelfareSupportById,
-} from "@/lib/welfare/repository";
+import { getWelfareSupportById } from "@/lib/welfare/repository";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
+import {
+  listWelfareSupportTypeOptionsForEdit,
+  seedDefaultWelfareSupportTypes,
+} from "@/lib/welfare-support-types/repository";
+import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 
 export const metadata = createPageMetadata(
   "Edit Welfare Support",
@@ -27,12 +29,22 @@ export default async function EditWelfareSupportPage({
     redirect("/admin/welfare-support");
   }
 
+  if (!isFirebaseAdminConfigured()) {
+    redirect("/admin/welfare-support");
+  }
+
+  await seedDefaultWelfareSupportTypes(actor);
+
   const { id } = await params;
   const record = await getWelfareSupportById(id);
 
   if (!record) {
     notFound();
   }
+
+  const supportTypes = await listWelfareSupportTypeOptionsForEdit(
+    record.supportType,
+  );
 
   return (
     <AdminPageShell
@@ -46,7 +58,7 @@ export default async function EditWelfareSupportPage({
           { label: "Edit" },
         ]}
       />
-      <EditWelfareSupportForm record={record} />
+      <EditWelfareSupportForm record={record} supportTypes={supportTypes} />
     </AdminPageShell>
   );
 }

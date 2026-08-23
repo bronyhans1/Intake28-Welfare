@@ -29,6 +29,22 @@ describe("createClaimDraftSchema", () => {
 
     expect(parsed.success).toBe(false);
   });
+
+  it("allows draft save without incident date, title and description required", () => {
+    const missingDescription = createClaimDraftSchema.safeParse({
+      claimTypeCode: "child_birth",
+      title: "Title",
+      description: "",
+    });
+    expect(missingDescription.success).toBe(false);
+
+    const withoutIncident = createClaimDraftSchema.safeParse({
+      claimTypeCode: "child_birth",
+      title: "Title",
+      description: "Description",
+    });
+    expect(withoutIncident.success).toBe(true);
+  });
 });
 
 describe("createClaimTypeConfigSchema", () => {

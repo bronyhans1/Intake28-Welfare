@@ -29,6 +29,12 @@ import {
 import type { CurrentUser } from "@/types/auth";
 import { UserRole } from "@/types/enums";
 
+const mockResolveOwnMemberId = vi.fn();
+
+vi.mock("@/lib/members/member-context", () => ({
+  resolveOwnMemberId: (...args: unknown[]) => mockResolveOwnMemberId(...args),
+}));
+
 const mockCollection = vi.fn();
 const mockDoc = vi.fn();
 const mockSet = vi.fn();
@@ -221,6 +227,7 @@ describe("notification read-state isolation", () => {
     eventStore.clear();
     readStore.clear();
     vi.clearAllMocks();
+    mockResolveOwnMemberId.mockResolvedValue(null);
     seedEvent("notif-1");
   });
 
@@ -341,6 +348,7 @@ describe("unified notification centre scoping", () => {
     eventStore.clear();
     readStore.clear();
     vi.clearAllMocks();
+    mockResolveOwnMemberId.mockResolvedValue(null);
   });
 
   it("creates member claim notifications with action links", () => {
@@ -510,7 +518,7 @@ describe("unified notification centre scoping", () => {
     );
   });
 
-  it("classifies visibility by audience and membership", () => {
+  it("classifies visibility by audience, membership, and context", () => {
     const memberEvent = {
       id: "1",
       audience: NotificationAudience.MEMBER,
@@ -522,9 +530,194 @@ describe("unified notification centre scoping", () => {
       memberId: memberA.uid,
     } as NotificationEvent;
 
-    expect(isEventVisibleToUser(memberEvent, memberA)).toBe(true);
-    expect(isEventVisibleToUser(executiveEvent, memberA)).toBe(false);
-    expect(isEventVisibleToUser(memberEvent, admin)).toBe(true);
-    expect(isEventVisibleToUser(executiveEvent, admin)).toBe(true);
+    expect(isEventVisibleToUser(memberEvent, memberA, "member", memberA.uid)).toBe(
+      true,
+    );
+    expect(isEventVisibleToUser(executiveEvent, memberA, "member", memberA.uid)).toBe(
+      false,
+    );
+    expect(isEventVisibleToUser(memberEvent, admin, "management")).toBe(true);
+    expect(isEventVisibleToUser(executiveEvent, admin, "management")).toBe(true);
+    expect(isEventVisibleToUser(memberEvent, admin, "member", null)).toBe(false);
+    expect(isEventVisibleToUser(memberEvent, admin, "member", admin.uid)).toBe(
+      false,
+    );
+    expect(
+      isEventVisibleToUser(
+        { ...memberEvent, memberId: admin.uid } as NotificationEvent,
+        admin,
+        "member",
+        admin.uid,
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("notification context separation", () => {
+  const memberA = makeActor("member-a", UserRole.MEMBER, {
+    fullName: "Member A",
+    serviceNumber: "IS/00010",
+  });
+  const memberB = makeActor("member-b", UserRole.MEMBER, {
+    fullName: "Member B",
+    serviceNumber: "IS/00011",
+  });
+  const adminLinked = makeActor("admin-linked", UserRole.ADMIN, {
+    fullName: "Admin Member",
+    serviceNumber: "IS/10002",
+  });
+  const treasurerLinked = makeActor("treasurer-linked", UserRole.TREASURER, {
+    fullName: "Treasurer Member",
+    serviceNumber: "IS/10003",
+  });
+  const adminOnly = makeActor("admin-only", UserRole.ADMIN);
+
+  beforeEach(() => {
+    eventStore.clear();
+    readStore.clear();
+    vi.clearAllMocks();
+    mockResolveOwnMemberId.mockImplementation(async (actor: CurrentUser) => {
+      if (actor.uid === "admin-linked" || actor.uid === "treasurer-linked") {
+        return actor.uid;
+      }
+      if (actor.role === UserRole.MEMBER) {
+        return actor.uid;
+      }
+      return null;
+    });
+  });
+
+  it("shows member notifications to normal members in member context", async () => {
+    seedMemberClaimEvent("claim-a", memberA.uid);
+    seedMemberClaimEvent("claim-b", memberB.uid);
+    seedEvent("exec-profile");
+
+    const list = await listNotificationsForUser(
+      memberA,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+
+    expect(list.records).toHaveLength(1);
+    expect(list.records[0]?.id).toBe("claim-a");
+  });
+
+  it("shows linked admin own member notifications in member context", async () => {
+    seedMemberClaimEvent("claim-admin", adminLinked.uid);
+    seedMemberClaimEvent("claim-other", memberB.uid);
+    seedEvent("exec-profile");
+
+    const list = await listNotificationsForUser(
+      adminLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+
+    expect(list.records).toHaveLength(1);
+    expect(list.records[0]?.id).toBe("claim-admin");
+  });
+
+  it("shows linked treasurer own member notifications in member context", async () => {
+    seedMemberClaimEvent("claim-treasurer", treasurerLinked.uid);
+    seedEvent("exec-profile");
+
+    const list = await listNotificationsForUser(
+      treasurerLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+
+    expect(list.records).toHaveLength(1);
+    expect(list.records[0]?.id).toBe("claim-treasurer");
+  });
+
+  it("shows management notifications to linked admin in management context", async () => {
+    seedMemberClaimEvent("claim-admin", adminLinked.uid);
+    seedEvent("exec-profile");
+
+    const list = await listNotificationsForUser(
+      adminLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "management",
+    );
+
+    expect(list.records.map((record) => record.id).sort()).toEqual([
+      "claim-admin",
+      "exec-profile",
+    ]);
+  });
+
+  it("shows management notifications to linked treasurer in management context", async () => {
+    seedMemberClaimEvent("claim-treasurer", treasurerLinked.uid);
+    seedEvent("exec-profile");
+
+    const list = await listNotificationsForUser(
+      treasurerLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "management",
+    );
+
+    expect(list.records.map((record) => record.id).sort()).toEqual([
+      "claim-treasurer",
+      "exec-profile",
+    ]);
+  });
+
+  it("blocks linked executives from seeing another member's notifications in member context", async () => {
+    seedMemberClaimEvent("claim-other", memberB.uid);
+
+    const adminList = await listNotificationsForUser(
+      adminLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+    const treasurerList = await listNotificationsForUser(
+      treasurerLinked,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+
+    expect(adminList.records).toHaveLength(0);
+    expect(treasurerList.records).toHaveLength(0);
+  });
+
+  it("returns no member notifications when executive has no linked member context", async () => {
+    mockResolveOwnMemberId.mockResolvedValue(null);
+    seedMemberClaimEvent("claim-a", memberA.uid);
+    seedEvent("exec-profile");
+
+    const count = await getUnreadNotificationCount(adminOnly, "member");
+    const list = await listNotificationsForUser(
+      adminOnly,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "member",
+    );
+
+    expect(count).toBe(0);
+    expect(list.records).toHaveLength(0);
+  });
+
+  it("keeps existing management notification behavior intact", async () => {
+    seedMemberClaimEvent("claim-a", memberA.uid);
+    seedEvent("exec-profile");
+
+    const count = await getUnreadNotificationCount(adminOnly, "management");
+    const list = await listNotificationsForUser(
+      adminOnly,
+      { page: 1, pageSize: 20, status: "all", audience: "all" },
+      "management",
+    );
+
+    expect(count).toBe(2);
+    expect(list.records).toHaveLength(2);
+  });
+
+  it("scopes member portal unread count to own member notifications", async () => {
+    seedMemberClaimEvent("claim-admin", adminLinked.uid);
+    seedMemberClaimEvent("claim-other", memberB.uid);
+    seedEvent("exec-profile");
+
+    expect(await getUnreadNotificationCount(adminLinked, "member")).toBe(1);
+    expect(await getUnreadNotificationCount(adminLinked, "management")).toBe(3);
   });
 });

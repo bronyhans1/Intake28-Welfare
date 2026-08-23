@@ -86,7 +86,7 @@ export function MemberNotificationsCentre({
     setPendingAction({ type: "read", id: notificationId });
     startActionTransition(async () => {
       try {
-        const result = await markNotificationReadAction(notificationId);
+        const result = await markNotificationReadAction(notificationId, "member");
         if (result.error) {
           setActionError(result.error);
           return;
@@ -103,7 +103,7 @@ export function MemberNotificationsCentre({
     setPendingAction({ type: "read-all" });
     startActionTransition(async () => {
       try {
-        const result = await markAllNotificationsReadAction();
+        const result = await markAllNotificationsReadAction("member");
         if (result.error) {
           setActionError(result.error);
           return;

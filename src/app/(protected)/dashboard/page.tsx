@@ -3,6 +3,7 @@ import { MemberDashboard } from "@/components/member/member-dashboard";
 import { MemberPageShell } from "@/components/member/member-page-shell";
 import { createPageMetadata } from "@/components/shared/page-placeholder";
 import { getCurrentUserFromSession } from "@/lib/auth/session";
+import { requireOwnMemberPortalAccess } from "@/lib/auth/require-member-portal";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 import { getMemberById } from "@/lib/members/repository";
 import { listVisibleAnnouncementsForUser } from "@/lib/announcements/repository";
@@ -11,7 +12,8 @@ import {
   listContributions,
 } from "@/lib/contributions/repository";
 import { getMemberMembershipStatus } from "@/lib/membership/status-summary";
-import { listWelfareSupport } from "@/lib/welfare/repository";
+import { listMemberWelfareHistory } from "@/lib/welfare/history";
+import { listAllWelfareSupportTypeOptions } from "@/lib/welfare-support-types/repository";
 import {
   calculateProfileCompletion,
   toProfileCompletionContext,
@@ -33,6 +35,8 @@ export default async function DashboardPage() {
     redirect("/login");
   }
 
+  await requireOwnMemberPortalAccess(actor, "/dashboard");
+
   if (!isFirebaseAdminConfigured()) {
     return (
       <MemberPageShell title="Dashboard" description="Member dashboard overview.">
@@ -43,20 +47,24 @@ export default async function DashboardPage() {
     );
   }
 
-  const [member, welfareData, visibleAnnouncements, contributionStats, contributionsData, membershipStatus, officialConstitution] =
+  const [member, welfareData, visibleAnnouncements, contributionStats, contributionsData, membershipStatus, officialConstitution, supportTypes] =
     await Promise.all([
       getMemberById(actor.uid),
-      listWelfareSupport({ memberId: actor.uid, page: 1, pageSize: 5 }),
+      listMemberWelfareHistory(actor, { page: 1, pageSize: 5 }),
       listVisibleAnnouncementsForUser(actor),
       getContributionStats({ memberId: actor.uid }),
       listContributions({ memberId: actor.uid, page: 1, pageSize: 1 }),
       getMemberMembershipStatus(actor.uid, actor),
       getActiveConstitution(),
+      listAllWelfareSupportTypeOptions(),
     ]);
 
   const latestAnnouncement = visibleAnnouncements[0] ?? null;
   const visibleAnnouncementCount = visibleAnnouncements.length;
   const lastContributionDate = contributionsData.records[0]?.createdAt ?? null;
+  const supportTypeLabelMap = Object.fromEntries(
+    supportTypes.map((type) => [type.code, type.displayName]),
+  );
 
   if (!member) {
     redirect("/login");
@@ -76,7 +84,8 @@ export default async function DashboardPage() {
       <MemberDashboard
         member={member}
         completion={completion}
-        welfareRecords={welfareData.records}
+        welfareRecords={welfareData.entries}
+        supportTypeLabelMap={supportTypeLabelMap}
         latestAnnouncement={latestAnnouncement}
         visibleAnnouncementCount={visibleAnnouncementCount}
         contributionStats={contributionStats}

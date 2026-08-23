@@ -127,9 +127,15 @@ const NAV_SECTIONS: NavSection[] = [
       },
       {
         href: "/admin/welfare-support",
-        label: "Welfare Support",
+        label: "Welfare Records",
+        icon: HandHeart,
+      },
+      {
+        href: "/admin/welfare-support/types",
+        label: "Support Types",
         icon: HandHeart,
         matchPrefix: true,
+        adminOnly: true,
       },
       {
         href: "/admin/claims/submitted",

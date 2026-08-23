@@ -48,10 +48,18 @@ describe("member route permissions", () => {
     expect(canAccessRoute(UserRole.TREASURER, "/admin/members")).toBe(true);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/members/pending")).toBe(true);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/welfare-support")).toBe(true);
+    expect(canAccessRoute(UserRole.TREASURER, "/admin/welfare-support/new")).toBe(true);
+    expect(canAccessRoute(UserRole.TREASURER, "/admin/welfare-support/types")).toBe(false);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/audit-logs")).toBe(true);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/finance")).toBe(true);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/contributions")).toBe(true);
     expect(canAccessRoute(UserRole.TREASURER, "/admin/settings")).toBe(false);
+  });
+
+  it("allows admin to manage welfare support types", () => {
+    expect(canAccessRoute(UserRole.ADMIN, "/admin/welfare-support/types")).toBe(
+      true,
+    );
   });
 
   it("allows admin access to finance dashboard", () => {
@@ -110,7 +118,7 @@ describe("member route permissions", () => {
     expect(canAccessRoute(UserRole.MEMBER, "/portal/announcements")).toBe(true);
   });
 
-  it("allows admin and treasurer on executive member portal routes", () => {
+  it("allows linked executives on member portal routes", () => {
     const routes = [
       "/dashboard",
       "/portal/profile",

@@ -8,7 +8,9 @@ import {
   getClaimById,
   isAdminReviewClaimStatus,
 } from "@/lib/claims/claim-repository";
+import { getClaimTypeConfigByCode } from "@/lib/claims/claim-type-repository";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
+import { ClaimAmountMode } from "@/types/enums";
 
 export const dynamic = "force-dynamic";
 
@@ -45,12 +47,17 @@ export default async function AdminSubmittedClaimDetailPage({
     notFound();
   }
 
+  const claimType = await getClaimTypeConfigByCode(claim.claimTypeCode);
+
   return (
     <AdminPageShell
       title={claim.claimNumber ?? "Claim"}
       description="Welfare Executive review. Approval confirms executive decision only — payment is not processed in this phase."
     >
-      <AdminSubmittedClaimDetail claim={claim} />
+      <AdminSubmittedClaimDetail
+        claim={claim}
+        amountMode={claimType?.amountMode ?? ClaimAmountMode.MANUAL}
+      />
     </AdminPageShell>
   );
 }

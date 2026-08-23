@@ -58,6 +58,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   [PasswordResetAuditAction.PASSWORD_RESET_COMPLETED]: "Password reset completed",
   [WelfareSupportAuditAction.WELFARE_SUPPORT_CREATED]: "Welfare support created",
   [WelfareSupportAuditAction.WELFARE_SUPPORT_UPDATED]: "Welfare support updated",
+  welfare_support_type_created: "Welfare support type created",
+  welfare_support_type_updated: "Welfare support type updated",
+  welfare_support_type_seeded: "Welfare support types seeded",
   [ReportAuditAction.REPORT_EXPORTED]: "Report exported",
   [AnnouncementAuditAction.ANNOUNCEMENT_CREATED]: "Announcement created",
   [AnnouncementAuditAction.ANNOUNCEMENT_UPDATED]: "Announcement updated",
@@ -105,6 +108,7 @@ const AUDIT_ENTITY_TYPE_LABELS: Record<string, string> = {
   announcement_post: "Announcement",
   welfare_support: "Welfare Support",
   welfare_support_record: "Welfare Support",
+  welfare_support_type_config: "Welfare Support Type",
   payment: "Payment",
   payment_record: "Payment",
   contribution: "Contribution",
@@ -218,6 +222,12 @@ export function formatAuditEntityLabel(
     const claimTypeName =
       displayName ?? (code ? humanizeIdentifier(code) : null);
     return formatNamedEntity(typeLabel, claimTypeName);
+  }
+
+  if (entityType === "welfare_support_type_config") {
+    const typeName =
+      displayName ?? (code ? humanizeIdentifier(code) : null);
+    return formatNamedEntity(typeLabel, typeName);
   }
 
   if (entityType === "constitution" || entityType === "constitution_config") {

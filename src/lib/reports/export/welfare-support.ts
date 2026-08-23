@@ -1,31 +1,47 @@
-import { fetchAllWelfareSupportForReport } from "@/lib/reports/data";
+import { fetchAllWelfareHistoryForReport } from "@/lib/reports/data";
 import { csvToBuffer, rowsToCsv } from "@/lib/reports/export/csv";
 import { rowsToExcelBuffer } from "@/lib/reports/export/excel";
 import type { ExportFile, ExportFormat, ReportExportFilters } from "@/lib/reports/types";
 import { formatCurrency } from "@/lib/utils/currency";
 import { formatDisplayDate } from "@/lib/utils/format-date";
-import { WELFARE_SUPPORT_TYPE_LABELS, WelfareSupportType } from "@/types/enums";
-import type { SerializedWelfareSupport } from "@/types/welfare-support";
+import { resolveWelfareSupportTypeDisplayName } from "@/lib/welfare-support-types/labels";
+import { listAllWelfareSupportTypeOptions } from "@/lib/welfare-support-types/repository";
+import type { WelfareHistoryEntry } from "@/types/welfare-history";
 
 const HEADERS = [
-  "Support Type",
+  "Support Type / Benefit",
+  "Source",
   "Member",
   "Service Number",
   "Amount",
-  "Date Recorded",
+  "Date",
 ];
 
-function formatSupportTypeLabel(value: SerializedWelfareSupport["supportType"]): string {
-  return WELFARE_SUPPORT_TYPE_LABELS[value as WelfareSupportType] ?? value;
+function sourceLabel(source: WelfareHistoryEntry["source"]): string {
+  return source === "claim_payment" ? "Claim Payment" : "Welfare Support";
 }
 
-function mapWelfareSupportRows(records: SerializedWelfareSupport[]) {
-  return records.map((record) => [
-    formatSupportTypeLabel(record.supportType),
-    record.memberName,
-    record.serviceNumber,
-    formatCurrency(record.amount),
-    formatDisplayDate(record.createdAt),
+function benefitLabel(
+  entry: WelfareHistoryEntry,
+  labelMap: Record<string, string>,
+): string {
+  if (entry.source === "welfare_support" && entry.supportTypeCode) {
+    return resolveWelfareSupportTypeDisplayName(entry.supportTypeCode, labelMap);
+  }
+  return entry.benefitTypeLabel;
+}
+
+function mapWelfareHistoryRows(
+  entries: WelfareHistoryEntry[],
+  labelMap: Record<string, string>,
+) {
+  return entries.map((entry) => [
+    benefitLabel(entry, labelMap),
+    sourceLabel(entry.source),
+    entry.memberName,
+    entry.serviceNumber,
+    formatCurrency(entry.amount),
+    formatDisplayDate(entry.occurredAt),
   ]);
 }
 
@@ -36,17 +52,25 @@ function buildFilename(format: ExportFormat, filters: ReportExportFilters): stri
   return `${parts.join("-")}.${format}`;
 }
 
+async function loadLabelMap(): Promise<Record<string, string>> {
+  const types = await listAllWelfareSupportTypeOptions();
+  return Object.fromEntries(types.map((type) => [type.code, type.displayName]));
+}
+
 export async function exportWelfareSupportCsv(
   filters: ReportExportFilters = {},
 ): Promise<ExportFile> {
-  const records = await fetchAllWelfareSupportForReport({
-    supportMonth: filters.month,
-    supportYear: filters.year,
-    memberId: filters.memberId,
-    supportType: filters.supportType as never,
-  });
+  const [entries, labelMap] = await Promise.all([
+    fetchAllWelfareHistoryForReport({
+      supportMonth: filters.month,
+      supportYear: filters.year,
+      memberId: filters.memberId,
+      supportType: filters.supportType as never,
+    }),
+    loadLabelMap(),
+  ]);
 
-  const csv = rowsToCsv(HEADERS, mapWelfareSupportRows(records));
+  const csv = rowsToCsv(HEADERS, mapWelfareHistoryRows(entries, labelMap));
 
   return {
     content: csvToBuffer(csv),
@@ -58,18 +82,21 @@ export async function exportWelfareSupportCsv(
 export async function exportWelfareSupportExcel(
   filters: ReportExportFilters = {},
 ): Promise<ExportFile> {
-  const records = await fetchAllWelfareSupportForReport({
-    supportMonth: filters.month,
-    supportYear: filters.year,
-    memberId: filters.memberId,
-    supportType: filters.supportType as never,
-  });
+  const [entries, labelMap] = await Promise.all([
+    fetchAllWelfareHistoryForReport({
+      supportMonth: filters.month,
+      supportYear: filters.year,
+      memberId: filters.memberId,
+      supportType: filters.supportType as never,
+    }),
+    loadLabelMap(),
+  ]);
 
   return {
     content: rowsToExcelBuffer(
       "Welfare Support",
       HEADERS,
-      mapWelfareSupportRows(records),
+      mapWelfareHistoryRows(entries, labelMap),
     ),
     contentType:
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

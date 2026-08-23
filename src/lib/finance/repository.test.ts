@@ -5,14 +5,15 @@ import {
 } from "@/lib/finance/repository";
 
 const mockGetContributionStats = vi.fn();
-const mockGetWelfareSupportStats = vi.fn();
+const mockGetUnifiedWelfarePaidStats = vi.fn();
 
 vi.mock("@/lib/contributions/repository", () => ({
   getContributionStats: (...args: unknown[]) => mockGetContributionStats(...args),
 }));
 
-vi.mock("@/lib/welfare/repository", () => ({
-  getWelfareSupportStats: (...args: unknown[]) => mockGetWelfareSupportStats(...args),
+vi.mock("@/lib/welfare/history", () => ({
+  getUnifiedWelfarePaidStats: (...args: unknown[]) =>
+    mockGetUnifiedWelfarePaidStats(...args),
 }));
 
 describe("computeFinancialSummary", () => {
@@ -54,6 +55,19 @@ describe("computeFinancialSummary", () => {
       currentBalance: -300,
     });
   });
+
+  it("subtracts unified welfare paid including claim payments from contributions", () => {
+    expect(
+      computeFinancialSummary({
+        totalContributionAmount: 300,
+        totalSupportAmount: 1250,
+      }),
+    ).toEqual({
+      totalContributions: 300,
+      totalSupportPaid: 1250,
+      currentBalance: -950,
+    });
+  });
 });
 
 describe("getFinancialSummary", () => {
@@ -64,14 +78,14 @@ describe("getFinancialSummary", () => {
       totalAmountCollected: 150,
       membersContributed: 2,
     });
-    mockGetWelfareSupportStats.mockResolvedValue({
+    mockGetUnifiedWelfarePaidStats.mockResolvedValue({
       totalRecords: 1,
       totalAmount: 40,
       membersAssisted: 1,
     });
   });
 
-  it("aggregates contribution and welfare repository stats", async () => {
+  it("aggregates contribution and unified welfare paid stats", async () => {
     const summary = await getFinancialSummary();
 
     expect(summary).toEqual({
@@ -80,7 +94,7 @@ describe("getFinancialSummary", () => {
       currentBalance: 110,
     });
     expect(mockGetContributionStats).toHaveBeenCalledWith({});
-    expect(mockGetWelfareSupportStats).toHaveBeenCalledWith({});
+    expect(mockGetUnifiedWelfarePaidStats).toHaveBeenCalledWith({});
   });
 
   it("passes optional filters to both repositories", async () => {
@@ -91,10 +105,10 @@ describe("getFinancialSummary", () => {
       month: 6,
       year: 2026,
     });
-    expect(mockGetWelfareSupportStats).toHaveBeenCalledWith({
+    expect(mockGetUnifiedWelfarePaidStats).toHaveBeenCalledWith({
       memberId: "m1",
-      supportMonth: 6,
-      supportYear: 2026,
+      month: 6,
+      year: 2026,
     });
   });
 
@@ -104,7 +118,7 @@ describe("getFinancialSummary", () => {
       totalAmountCollected: 0,
       membersContributed: 0,
     });
-    mockGetWelfareSupportStats.mockResolvedValue({
+    mockGetUnifiedWelfarePaidStats.mockResolvedValue({
       totalRecords: 0,
       totalAmount: 0,
       membersAssisted: 0,

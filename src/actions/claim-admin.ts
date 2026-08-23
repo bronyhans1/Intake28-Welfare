@@ -695,13 +695,17 @@ export async function recommendClaimAction(
 
   const parsed = recommendClaimSchema.safeParse(input);
   if (!parsed.success) {
-    return { error: "Invalid claim." };
+    return {
+      error: "Invalid recommendation request.",
+      fieldErrors: parsed.error.flatten().fieldErrors,
+    };
   }
 
   try {
-    await recommendClaim(parsed.data.claimId, access);
-    revalidateClaimPaths(parsed.data.claimId);
-    return { success: true, id: parsed.data.claimId };
+    const { claimId, ...recommendation } = parsed.data;
+    await recommendClaim(claimId, access, recommendation);
+    revalidateClaimPaths(claimId);
+    return { success: true, id: claimId };
   } catch (error) {
     return {
       error:

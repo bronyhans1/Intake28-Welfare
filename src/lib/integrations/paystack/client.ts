@@ -75,7 +75,11 @@ export async function paystackInitializeTransaction(input: {
     ...(input.metadata ? { metadata: input.metadata } : {}),
   };
 
-  console.info("[paystack] initialize transaction payload", requestBody);
+  console.info("[paystack] initialize transaction", {
+    reference: input.reference,
+    currency: input.currency,
+    amountMinor: Math.round(input.amount * 100),
+  });
 
   const response = await fetch("https://api.paystack.co/transaction/initialize", {
     method: "POST",
@@ -98,6 +102,8 @@ export async function paystackInitializeTransaction(input: {
 export async function paystackVerifyTransaction(reference: string): Promise<{
   status: PaymentStatus;
   providerReference: string;
+  amount: number;
+  currency: string;
   paidAt: Date | null;
 }> {
   const response = await fetch(
@@ -119,6 +125,8 @@ export async function paystackVerifyTransaction(reference: string): Promise<{
   return {
     status: mapPaystackStatus(payload.data.status),
     providerReference: payload.data.reference,
+    amount: payload.data.amount,
+    currency: payload.data.currency,
     paidAt: payload.data.paid_at ? new Date(payload.data.paid_at) : null,
   };
 }

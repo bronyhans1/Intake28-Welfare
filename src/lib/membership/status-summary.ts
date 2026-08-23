@@ -6,7 +6,8 @@ import { formatContributionTypeLabel } from "@/lib/contributions/labels";
 import { getMonthlyDuesPaymentGuardStatus } from "@/lib/payments/monthly-dues-guard";
 import { listPayments } from "@/lib/payments/repository";
 import { getReceiptStats } from "@/lib/receipts/repository";
-import { listWelfareSupport } from "@/lib/welfare/repository";
+import { listMemberWelfareHistory } from "@/lib/welfare/history";
+import { assertOwnMemberScope } from "@/lib/members/member-context";
 import type { CurrentUser } from "@/types/auth";
 
 export interface MemberMembershipStatus {
@@ -29,14 +30,16 @@ export async function getMemberMembershipStatus(
   memberId: string,
   actor: CurrentUser,
 ): Promise<MemberMembershipStatus> {
-  const [monthlyDues, contributions, stats, payments, receiptStats, welfare] =
+  assertOwnMemberScope(memberId, actor);
+
+  const [monthlyDues, contributions, stats, payments, receiptStats, welfareHistory] =
     await Promise.all([
     getMonthlyDuesPaymentGuardStatus(memberId),
     listContributions({ memberId, page: 1, pageSize: 1 }),
     getContributionStats({ memberId }),
     listPayments({ page: 1, pageSize: 1, memberId }, actor),
     getReceiptStats({ memberId }),
-    listWelfareSupport({ memberId, page: 1, pageSize: 1 }),
+    listMemberWelfareHistory(actor, { page: 1, pageSize: 1 }),
   ]);
 
   const lastContribution = contributions.records[0] ?? null;
@@ -57,6 +60,6 @@ export async function getMemberMembershipStatus(
     paymentCount: payments.total,
     lastPaymentDate: lastPayment?.paidAt ?? lastPayment?.createdAt ?? null,
     receiptCount: receiptStats.issuedReceipts,
-    welfareSupportCount: welfare.total,
+    welfareSupportCount: welfareHistory.total,
   };
 }

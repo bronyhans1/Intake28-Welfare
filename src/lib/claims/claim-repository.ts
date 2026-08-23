@@ -281,6 +281,75 @@ export async function listSubmittedClaims(
 }
 
 /**
+ * Member-scoped claims ready for Treasurer payment from Welfare Records.
+ * Includes awaiting_payment and in-progress payment_processing without a paymentId.
+ */
+function isClaimAwaitingTreasurerPayment(claim: Claim): boolean {
+  return (
+    (claim.status === ClaimStatus.AWAITING_PAYMENT ||
+      claim.status === ClaimStatus.PAYMENT_PROCESSING) &&
+    !claim.paymentId
+  );
+}
+
+function sortClaimsAwaitingTreasurerPayment(a: Claim, b: Claim): number {
+  const aTime =
+    timestampSeconds(a.financeQueuedAt) ||
+    timestampSeconds(a.approvedAt) ||
+    timestampSeconds(a.updatedAt);
+  const bTime =
+    timestampSeconds(b.financeQueuedAt) ||
+    timestampSeconds(b.approvedAt) ||
+    timestampSeconds(b.updatedAt);
+  return bTime - aTime;
+}
+
+export async function listMemberAwaitingPaymentClaims(
+  memberId: string,
+): Promise<SerializedClaim[]> {
+  const trimmed = memberId.trim();
+  if (!trimmed) return [];
+
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection(COLLECTIONS.CLAIMS)
+    .where("memberId", "==", trimmed)
+    .get();
+
+  const claims = snapshot.docs
+    .map((doc) => mapClaim(doc.id, doc.data() as Record<string, unknown>))
+    .filter(isClaimAwaitingTreasurerPayment)
+    .sort(sortClaimsAwaitingTreasurerPayment);
+
+  return claims.map(serializeClaim);
+}
+
+/**
+ * All claims currently awaiting Treasurer payment (Welfare Records desk).
+ * Read-only aggregate for the management awaiting-payment list.
+ */
+export async function listAwaitingPaymentClaims(): Promise<SerializedClaim[]> {
+  const db = getAdminDb();
+  const snapshot = await db.collection(COLLECTIONS.CLAIMS).get();
+
+  const claims = snapshot.docs
+    .map((doc) => mapClaim(doc.id, doc.data() as Record<string, unknown>))
+    .filter(isClaimAwaitingTreasurerPayment)
+    .sort(sortClaimsAwaitingTreasurerPayment);
+
+  return claims.map(serializeClaim);
+}
+
+/** Deep-link into the existing Welfare Records payment desk for a claim. */
+export function buildWelfareRecordsPayDeskUrl(
+  memberId: string,
+  claimId: string,
+): string {
+  const params = new URLSearchParams({ memberId, claimId });
+  return `/admin/welfare-support/new?${params.toString()}`;
+}
+
+/**
  * Finance queue — awaiting payment / processing / paid claims.
  */
 export async function listFinanceClaims(

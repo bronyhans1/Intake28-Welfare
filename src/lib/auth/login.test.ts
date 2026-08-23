@@ -107,4 +107,13 @@ describe("protected route access", () => {
       allowed: true,
     });
   });
+
+  it("allows linked executives on member portal routes", () => {
+    expect(resolveProtectedRouteAccess(UserRole.ADMIN, "/dashboard")).toEqual({
+      allowed: true,
+    });
+    expect(
+      resolveProtectedRouteAccess(UserRole.TREASURER, "/portal/welfare-support"),
+    ).toEqual({ allowed: true });
+  });
 });

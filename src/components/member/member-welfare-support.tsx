@@ -1,5 +1,11 @@
 import Link from "next/link";
 import {
+  ClaimBenefitTypeBadge,
+  SupportTypeBadge,
+  WelfareHistorySourceBadge,
+  WelfareHistoryStatusBadge,
+} from "@/components/admin/welfare-support-badge";
+import {
   Table,
   TableBody,
   TableCell,
@@ -7,45 +13,61 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { SupportTypeBadge } from "@/components/admin/welfare-support-badge";
 import { formatCurrency } from "@/lib/utils/currency";
 import { formatDisplayDate } from "@/lib/utils/format-date";
-import type { SerializedWelfareSupport } from "@/types/welfare-support";
+import type { WelfareHistoryEntry } from "@/types/welfare-history";
 
 interface MemberWelfareSupportTableProps {
-  records: SerializedWelfareSupport[];
+  entries: WelfareHistoryEntry[];
+  supportTypeLabelMap?: Record<string, string>;
 }
 
-export function MemberWelfareSupportTable({ records }: MemberWelfareSupportTableProps) {
+export function MemberWelfareSupportTable({
+  entries,
+  supportTypeLabelMap,
+}: MemberWelfareSupportTableProps) {
   return (
     <div className="rounded-xl border border-black/[0.08] bg-white shadow-sm">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Support Type</TableHead>
+            <TableHead>Benefit / Type</TableHead>
             <TableHead>Amount</TableHead>
-            <TableHead>Description</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Source</TableHead>
             <TableHead>Date</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {records.length === 0 ? (
+          {entries.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
-                No welfare support records found.
+              <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                No welfare assistance or paid benefits found.
               </TableCell>
             </TableRow>
           ) : (
-            records.map((record) => (
-              <TableRow key={record.id}>
+            entries.map((entry) => (
+              <TableRow key={entry.id}>
                 <TableCell>
-                  <SupportTypeBadge supportType={record.supportType} />
+                  {entry.source === "welfare_support" && entry.supportTypeCode ? (
+                    <SupportTypeBadge
+                      supportType={entry.supportTypeCode}
+                      labelMap={supportTypeLabelMap}
+                    />
+                  ) : (
+                    <ClaimBenefitTypeBadge label={entry.benefitTypeLabel} />
+                  )}
                 </TableCell>
                 <TableCell className="font-medium text-[#166534]">
-                  {formatCurrency(record.amount)}
+                  {formatCurrency(entry.amount)}
                 </TableCell>
-                <TableCell>{record.description}</TableCell>
-                <TableCell>{formatDisplayDate(record.createdAt)}</TableCell>
+                <TableCell>
+                  <WelfareHistoryStatusBadge statusLabel={entry.statusLabel} />
+                </TableCell>
+                <TableCell>
+                  <WelfareHistorySourceBadge source={entry.source} />
+                </TableCell>
+                <TableCell>{formatDisplayDate(entry.occurredAt)}</TableCell>
               </TableRow>
             ))
           )}
@@ -56,43 +78,58 @@ export function MemberWelfareSupportTable({ records }: MemberWelfareSupportTable
 }
 
 interface RecentWelfareSupportProps {
-  records: SerializedWelfareSupport[];
+  entries: WelfareHistoryEntry[];
+  supportTypeLabelMap?: Record<string, string>;
 }
 
-export function RecentWelfareSupport({ records }: RecentWelfareSupportProps) {
-  const recent = records.slice(0, 5);
+export function RecentWelfareSupport({
+  entries,
+  supportTypeLabelMap,
+}: RecentWelfareSupportProps) {
+  const recent = entries.slice(0, 5);
 
   return (
     <div className="space-y-3">
       {recent.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No welfare support records yet.</p>
+        <p className="text-sm text-muted-foreground">
+          No welfare assistance or paid benefits yet.
+        </p>
       ) : (
-        recent.map((record) => (
+        recent.map((entry) => (
           <div
-            key={record.id}
+            key={entry.id}
             className="flex flex-col gap-1 rounded-xl border border-black/[0.06] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="min-w-0">
-              <SupportTypeBadge supportType={record.supportType} />
+              {entry.source === "welfare_support" && entry.supportTypeCode ? (
+                <SupportTypeBadge
+                  supportType={entry.supportTypeCode}
+                  labelMap={supportTypeLabelMap}
+                />
+              ) : (
+                <ClaimBenefitTypeBadge label={entry.benefitTypeLabel} />
+              )}
               <p className="mt-1 truncate text-sm text-muted-foreground">
-                {record.description}
+                {entry.source === "claim_payment"
+                  ? `Claim Payment · ${entry.statusLabel}`
+                  : entry.description}
               </p>
             </div>
             <div className="text-sm">
-              <p className="font-semibold text-[#166534]">{formatCurrency(record.amount)}</p>
+              <p className="font-semibold text-[#166534]">{formatCurrency(entry.amount)}</p>
               <p className="text-xs text-muted-foreground">
-                {formatDisplayDate(record.createdAt)}
+                {formatDisplayDate(entry.occurredAt)}
               </p>
             </div>
           </div>
         ))
       )}
-      {records.length > 0 ? (
+      {entries.length > 0 ? (
         <Link
           href="/portal/welfare-support"
           className="inline-flex text-sm font-medium text-[#166534] hover:underline"
         >
-          View all welfare support →
+          View all welfare history →
         </Link>
       ) : null}
     </div>

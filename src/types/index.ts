@@ -10,3 +10,4 @@ export * from "./activation-otp";
 export * from "./activation";
 export * from "./auth";
 export * from "./welfare-support";
+export * from "./welfare-history";

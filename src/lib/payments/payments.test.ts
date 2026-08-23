@@ -232,6 +232,8 @@ describe("payments repository", () => {
     mockPaystackVerify.mockResolvedValue({
       status: PaymentStatus.SUCCESS,
       providerReference: "GIS-20260617-AB1234",
+      amount: 5000,
+      currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
   });
@@ -281,7 +283,10 @@ describe("payments repository", () => {
 
     expect(result.authorizationUrl).toContain("paystack");
     expect(mockPaystackInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 50 }),
+      expect.objectContaining({
+        amount: 50,
+        callbackUrl: expect.stringContaining("/api/payments/callback?reference="),
+      }),
     );
     expect(mockCreateAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -421,15 +426,25 @@ describe("payments repository", () => {
     expect(mockSet).not.toHaveBeenCalled();
   });
 
-  it("verifies payment server-side and updates status", async () => {
-    mockGet.mockResolvedValue({
-      docs: [
-        makePaymentDoc("payment-1", {
-          status: PaymentStatus.SUCCESS,
-          providerReference: "GIS-20260617-AB1234",
-          paidAt: makeTimestamp("2026-06-17T11:00:00.000Z"),
-        }),
-      ],
+  it("verifies pending payment server-side and updates status", async () => {
+    let status = PaymentStatus.PENDING;
+    mockGet.mockImplementation(() =>
+      Promise.resolve({
+        docs: [
+          makePaymentDoc("payment-1", {
+            status,
+            providerReference:
+              status === PaymentStatus.SUCCESS ? "GIS-20260617-AB1234" : null,
+            paidAt:
+              status === PaymentStatus.SUCCESS
+                ? makeTimestamp("2026-06-17T11:00:00.000Z")
+                : null,
+          }),
+        ],
+      }),
+    );
+    mockUpdate.mockImplementation(async () => {
+      status = PaymentStatus.SUCCESS;
     });
 
     const payment = await verifyPayment("GIS-20260617-AB1234", memberActor);
@@ -446,6 +461,25 @@ describe("payments repository", () => {
       expect.objectContaining({ status: PaymentStatus.SUCCESS }),
       memberActor,
     );
+  });
+
+  it("returns already settled payment without calling Paystack verify again", async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        makePaymentDoc("payment-1", {
+          status: PaymentStatus.SUCCESS,
+          providerReference: "GIS-20260617-AB1234",
+          paidAt: makeTimestamp("2026-06-17T11:00:00.000Z"),
+        }),
+      ],
+    });
+
+    const payment = await verifyPayment("GIS-20260617-AB1234", memberActor);
+
+    expect(mockPaystackVerify).not.toHaveBeenCalled();
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(payment.status).toBe(PaymentStatus.SUCCESS);
+    expect(mockEnsureContributionFromPayment).toHaveBeenCalled();
   });
 
   it("lists only member payments for members", async () => {
@@ -520,6 +554,26 @@ describe("payments repository", () => {
 
     expect(updated.status).toBe(PaymentStatus.FAILED);
     expect(updated.providerReference).toBe("provider-ref");
+  });
+
+  it("does not downgrade SUCCESS payments", async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        makePaymentDoc("payment-1", {
+          status: PaymentStatus.SUCCESS,
+          providerReference: "GIS-20260617-AB1234",
+          paidAt: makeTimestamp("2026-06-17T11:00:00.000Z"),
+        }),
+      ],
+    });
+
+    const updated = await updatePaymentStatus("GIS-20260617-AB1234", {
+      status: PaymentStatus.FAILED,
+      providerReference: "GIS-20260617-AB1234",
+    });
+
+    expect(updated.status).toBe(PaymentStatus.SUCCESS);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 

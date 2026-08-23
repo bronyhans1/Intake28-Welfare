@@ -28,8 +28,10 @@ import {
 import { claimAuditHistoryToTimelineEvents } from "@/lib/claims/claim-timeline-adapter";
 import {
   CLAIM_STATUS_LABELS,
+  ClaimAmountMode,
   ClaimCommentVisibility,
   ClaimStatus,
+  type ClaimAmountMode as ClaimAmountModeType,
 } from "@/types/enums";
 import type { SerializedClaim } from "@/types/claims";
 import type { ClaimExecutiveOption } from "@/lib/claims/claim-executive-review";
@@ -43,10 +45,12 @@ import { cn } from "@/lib/utils";
 
 interface AdminSubmittedClaimDetailProps {
   claim: SerializedClaim;
+  amountMode: ClaimAmountModeType;
 }
 
 export function AdminSubmittedClaimDetail({
   claim,
+  amountMode,
 }: AdminSubmittedClaimDetailProps) {
   const router = useRouter();
   const { showSuccess, showError } = useToast();
@@ -65,21 +69,29 @@ export function AdminSubmittedClaimDetail({
   const [reducedAmount, setReducedAmount] = useState("");
   const [bonusAmount, setBonusAmount] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
+  const [manualRecommendAmount, setManualRecommendAmount] = useState("");
+  const [manualRecommendReason, setManualRecommendReason] = useState("");
   const [executives, setExecutives] = useState<ClaimExecutiveOption[]>([]);
   const [assignedExecutiveId, setAssignedExecutiveId] = useState(
     claim.assignedExecutiveId ?? "",
   );
   const [error, setError] = useState<string | null>(null);
 
+  const isManual = amountMode === ClaimAmountMode.MANUAL;
   const snapshot = claim.eligibilitySnapshot;
   const progression = claim.progressionSnapshot;
   const recommendedAmount =
     claim.recommendedAmount ?? progression?.recommendedAmount ?? null;
   const claimCeiling = claim.claimCeiling ?? progression?.claimCeiling ?? null;
+  const hasExecutiveRecommendation =
+    typeof recommendedAmount === "number" && recommendedAmount > 0;
   const timelineEvents = claimAuditHistoryToTimelineEvents(claim.auditHistory);
   const comments = getExecutiveVisibleComments(claim.executiveComments);
   const canReturn = claim.status === ClaimStatus.SUBMITTED;
   const readOnly = isTerminalClaimStatus(claim.status);
+  const showApprovalSection =
+    canApproveClaim(claim.status) &&
+    (!isManual || hasExecutiveRecommendation);
 
   useEffect(() => {
     let cancelled = false;
@@ -349,10 +361,20 @@ export function AdminSubmittedClaimDetail({
             <CardTitle>Executive Review Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Manual review only. Approval queues the claim for Finance using the
-              final amount you select.
-            </p>
+            {isManual ? (
+              <div className="space-y-1 text-sm">
+                <p className="font-medium text-foreground">Executive Decision</p>
+                <p className="text-muted-foreground">
+                  This claim uses Executive Decision. Enter the benefit amount
+                  you recommend before approval.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Manual review only. Approval queues the claim for Finance using the
+                final amount you select.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {canStartClaimReview(claim.status) ? (
                 <LoadingButton
@@ -372,7 +394,65 @@ export function AdminSubmittedClaimDetail({
                   Start Review
                 </LoadingButton>
               ) : null}
-              {canRecommendClaim(claim.status) ? (
+            </div>
+
+            {canRecommendClaim(claim.status) ? (
+              isManual ? (
+                <div className="space-y-3 rounded-xl border border-sky-200 bg-sky-50/40 p-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="manualRecommendAmount" required>
+                      Recommended Benefit Amount (GHS)
+                    </Label>
+                    <input
+                      id="manualRecommendAmount"
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                      value={manualRecommendAmount}
+                      disabled={anyActionPending}
+                      onChange={(event) =>
+                        setManualRecommendAmount(event.target.value)
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="manualRecommendReason">
+                      Recommendation note (optional)
+                    </Label>
+                    <textarea
+                      id="manualRecommendReason"
+                      className="min-h-20 w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                      value={manualRecommendReason}
+                      disabled={anyActionPending}
+                      onChange={(event) =>
+                        setManualRecommendReason(event.target.value)
+                      }
+                    />
+                  </div>
+                  <LoadingButton
+                    type="button"
+                    loading={isAction("recommend")}
+                    disabled={anyActionPending && !isAction("recommend")}
+                    loadingText="Recommending..."
+                    className="bg-[#166534] text-white hover:bg-[#14532d]"
+                    onClick={() =>
+                      runAction(
+                        "recommend",
+                        () =>
+                          recommendClaimAction({
+                            claimId: claim.id,
+                            recommendedAmount: Number(manualRecommendAmount),
+                            reason: manualRecommendReason || null,
+                          }),
+                        "Claim recommended.",
+                      )
+                    }
+                  >
+                    Recommend Claim
+                  </LoadingButton>
+                </div>
+              ) : (
                 <LoadingButton
                   type="button"
                   loading={isAction("recommend")}
@@ -390,79 +470,124 @@ export function AdminSubmittedClaimDetail({
                 >
                   Recommend Claim
                 </LoadingButton>
-              ) : null}
-            </div>
+              )
+            ) : null}
 
-            {canApproveClaim(claim.status) ? (
+            {isManual &&
+            hasExecutiveRecommendation &&
+            !canRecommendClaim(claim.status) ? (
+              <p className="rounded-lg border border-emerald-200 bg-emerald-50/50 px-3 py-2 text-sm text-emerald-950">
+                Recommended Benefit Amount:{" "}
+                <span className="font-semibold">
+                  GHS {recommendedAmount!.toFixed(2)}
+                </span>
+              </p>
+            ) : null}
+
+            {showApprovalSection ? (
               <div className="space-y-3 rounded-xl border border-emerald-200 bg-emerald-50/40 p-4">
                 <p className="text-sm font-medium text-emerald-950">
                   Approve claim
                   {recommendedAmount != null
                     ? ` · Recommended GHS ${recommendedAmount.toFixed(2)}`
                     : ""}
-                  {claimCeiling != null
+                  {!isManual && claimCeiling != null
                     ? ` · Ceiling GHS ${claimCeiling.toFixed(2)}`
                     : ""}
                 </p>
-                <div className="space-y-2">
-                  <Label htmlFor="approvalDecision">Decision</Label>
-                  <select
-                    id="approvalDecision"
-                    className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
-                    value={approvalDecision}
-                    disabled={anyActionPending}
-                    onChange={(event) => setApprovalDecision(event.target.value)}
-                  >
-                    <option value="recommended">Approve recommended amount</option>
-                    <option value="reduced">Reduce amount</option>
-                    <option value="full_ceiling">Approve full claim ceiling</option>
-                    <option value="full_ceiling_plus_bonus">
-                      Approve full ceiling plus bonus
-                    </option>
-                  </select>
-                </div>
-                {approvalDecision === "reduced" ? (
+                {isManual ? (
                   <div className="space-y-2">
-                    <Label htmlFor="reducedAmount">Reduced amount (GHS)</Label>
-                    <input
-                      id="reducedAmount"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
+                    <Label htmlFor="approvalDecision">Decision</Label>
+                    <select
+                      id="approvalDecision"
                       className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
-                      value={reducedAmount}
-                      disabled={anyActionPending}
-                      onChange={(event) => setReducedAmount(event.target.value)}
-                    />
+                      value="recommended"
+                      disabled
+                    >
+                      <option value="recommended">
+                        Approve recommended amount
+                      </option>
+                    </select>
                   </div>
-                ) : null}
-                {approvalDecision === "full_ceiling_plus_bonus" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="bonusAmount">Bonus amount (GHS)</Label>
-                    <input
-                      id="bonusAmount"
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
-                      value={bonusAmount}
-                      disabled={anyActionPending}
-                      onChange={(event) => setBonusAmount(event.target.value)}
-                    />
-                  </div>
-                ) : null}
-                {approvalDecision !== "recommended" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="overrideReason">Override reason (required)</Label>
-                    <textarea
-                      id="overrideReason"
-                      className="min-h-20 w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
-                      value={overrideReason}
-                      disabled={anyActionPending}
-                      onChange={(event) => setOverrideReason(event.target.value)}
-                    />
-                  </div>
-                ) : null}
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="approvalDecision">Decision</Label>
+                      <select
+                        id="approvalDecision"
+                        className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                        value={approvalDecision}
+                        disabled={anyActionPending}
+                        onChange={(event) =>
+                          setApprovalDecision(event.target.value)
+                        }
+                      >
+                        <option value="recommended">
+                          Approve recommended amount
+                        </option>
+                        <option value="reduced">Reduce amount</option>
+                        <option value="full_ceiling">
+                          Approve full claim ceiling
+                        </option>
+                        <option value="full_ceiling_plus_bonus">
+                          Approve full ceiling plus bonus
+                        </option>
+                      </select>
+                    </div>
+                    {approvalDecision === "reduced" ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="reducedAmount">
+                          Reduced amount (GHS)
+                        </Label>
+                        <input
+                          id="reducedAmount"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                          value={reducedAmount}
+                          disabled={anyActionPending}
+                          onChange={(event) =>
+                            setReducedAmount(event.target.value)
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    {approvalDecision === "full_ceiling_plus_bonus" ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="bonusAmount">Bonus amount (GHS)</Label>
+                        <input
+                          id="bonusAmount"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          className="w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                          value={bonusAmount}
+                          disabled={anyActionPending}
+                          onChange={(event) =>
+                            setBonusAmount(event.target.value)
+                          }
+                        />
+                      </div>
+                    ) : null}
+                    {approvalDecision !== "recommended" ? (
+                      <div className="space-y-2">
+                        <Label htmlFor="overrideReason">
+                          Override reason (required)
+                        </Label>
+                        <textarea
+                          id="overrideReason"
+                          className="min-h-20 w-full rounded-lg border border-input bg-white px-2.5 py-2 text-sm"
+                          value={overrideReason}
+                          disabled={anyActionPending}
+                          onChange={(event) =>
+                            setOverrideReason(event.target.value)
+                          }
+                        />
+                      </div>
+                    ) : null}
+                  </>
+                )}
                 <LoadingButton
                   type="button"
                   loading={isAction("approve")}
@@ -475,21 +600,24 @@ export function AdminSubmittedClaimDetail({
                       () =>
                         approveClaimAction({
                           claimId: claim.id,
-                          decision: approvalDecision as
+                          decision: (isManual
+                            ? "recommended"
+                            : approvalDecision) as
                             | "recommended"
                             | "reduced"
                             | "full_ceiling"
                             | "full_ceiling_plus_bonus",
                           approvedAmount:
-                            approvalDecision === "reduced"
+                            !isManual && approvalDecision === "reduced"
                               ? Number(reducedAmount)
                               : undefined,
                           bonusAmount:
+                            !isManual &&
                             approvalDecision === "full_ceiling_plus_bonus"
                               ? Number(bonusAmount)
                               : undefined,
                           overrideReason:
-                            approvalDecision === "recommended"
+                            isManual || approvalDecision === "recommended"
                               ? undefined
                               : overrideReason,
                         }),
@@ -500,6 +628,15 @@ export function AdminSubmittedClaimDetail({
                   Approve Claim
                 </LoadingButton>
               </div>
+            ) : null}
+
+            {isManual &&
+            canApproveClaim(claim.status) &&
+            !hasExecutiveRecommendation ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                This claim requires an executive benefit amount before it can be
+                approved. Use Recommend Claim to enter the amount.
+              </p>
             ) : null}
 
             {canRejectClaim(claim.status) ? (

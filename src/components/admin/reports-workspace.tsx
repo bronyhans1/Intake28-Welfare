@@ -4,7 +4,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { CalendarClock, PiggyBank, TrendingUp, Wallet } from "lucide-react";
 import { ContributionTypeBadge } from "@/components/admin/contributions-badge";
-import { SupportTypeBadge } from "@/components/admin/welfare-support-badge";
+import {
+  ClaimBenefitTypeBadge,
+  SupportTypeBadge,
+  WelfareHistorySourceBadge,
+} from "@/components/admin/welfare-support-badge";
 import { ReportExportLink } from "@/components/loading/report-export-link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,13 +36,10 @@ import type { FinancialSummaryReport, ReportsDashboardSummary } from "@/lib/repo
 import type { ReportsPageQuery } from "@/lib/validators/reports";
 import { formatCurrency } from "@/lib/utils/currency";
 import { formatDisplayDate } from "@/lib/utils/format-date";
-import {
-  ContributionType,
-  WELFARE_SUPPORT_TYPE_LABELS,
-  WelfareSupportType,
-} from "@/types/enums";
+import { ContributionType } from "@/types/enums";
 import type { SerializedMember } from "@/types/user";
-import type { WelfareSupportListResult } from "@/lib/welfare/repository";
+import type { WelfareHistoryListResult } from "@/types/welfare-history";
+import type { WelfareSupportTypeOption } from "@/types/welfare-support-type";
 import { formatReceiptContributionTypeLabel } from "@/lib/receipts/labels";
 import type { ReceiptListResult } from "@/lib/receipts/repository";
 import { cn } from "@/lib/utils";
@@ -64,12 +65,13 @@ interface ReportsWorkspaceProps {
   dashboardSummary: ReportsDashboardSummary;
   financialSummaryReport: FinancialSummaryReport;
   contributions: ContributionListResult;
-  welfareSupport: WelfareSupportListResult;
+  welfareSupport: WelfareHistoryListResult;
   defaulters: DefaulterListResult;
   receipts: ReceiptListResult;
   progression: ProgressionReportResult;
   outstanding: OutstandingReportResult;
   members: SerializedMember[];
+  welfareSupportTypes: WelfareSupportTypeOption[];
   canExport: boolean;
 }
 
@@ -270,6 +272,7 @@ export function ReportsWorkspace({
   progression,
   outstanding,
   members,
+  welfareSupportTypes,
   canExport,
 }: ReportsWorkspaceProps) {
   const router = useRouter();
@@ -283,6 +286,9 @@ export function ReportsWorkspace({
   const urlSupportType = searchParams.get("supportType") ?? FILTER_ALL;
   const urlSearch = searchParams.get("search") ?? "";
   const urlStatus = searchParams.get("status") ?? FILTER_ALL;
+  const supportTypeLabelMap = Object.fromEntries(
+    welfareSupportTypes.map((type) => [type.code, type.displayName]),
+  );
 
   const [month, setMonth] = useState(urlMonth);
   const [year, setYear] = useState(urlYear);
@@ -618,9 +624,10 @@ export function ReportsWorkspace({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={FILTER_ALL}>All types</SelectItem>
-                    {Object.values(WelfareSupportType).map((type) => (
-                      <SelectItem key={type} value={type}>
-                        {WELFARE_SUPPORT_TYPE_LABELS[type]}
+                    {welfareSupportTypes.map((type) => (
+                      <SelectItem key={type.code} value={type.code}>
+                        {type.displayName}
+                        {!type.active ? " (inactive)" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -638,32 +645,43 @@ export function ReportsWorkspace({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Support Type</TableHead>
+                  <TableHead>Support Type / Benefit</TableHead>
+                  <TableHead>Source</TableHead>
                   <TableHead>Member</TableHead>
                   <TableHead>Service Number</TableHead>
                   <TableHead>Amount</TableHead>
-                  <TableHead>Date Recorded</TableHead>
+                  <TableHead>Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {welfareSupport.records.length === 0 ? (
+                {welfareSupport.entries.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                       No welfare support records found.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  welfareSupport.records.map((record) => (
-                    <TableRow key={record.id}>
+                  welfareSupport.entries.map((entry) => (
+                    <TableRow key={entry.id}>
                       <TableCell>
-                        <SupportTypeBadge supportType={record.supportType} />
+                        {entry.source === "welfare_support" && entry.supportTypeCode ? (
+                          <SupportTypeBadge
+                            supportType={entry.supportTypeCode}
+                            labelMap={supportTypeLabelMap}
+                          />
+                        ) : (
+                          <ClaimBenefitTypeBadge label={entry.benefitTypeLabel} />
+                        )}
                       </TableCell>
-                      <TableCell className="font-medium">{record.memberName}</TableCell>
-                      <TableCell>{record.serviceNumber}</TableCell>
+                      <TableCell>
+                        <WelfareHistorySourceBadge source={entry.source} />
+                      </TableCell>
+                      <TableCell className="font-medium">{entry.memberName}</TableCell>
+                      <TableCell>{entry.serviceNumber}</TableCell>
                       <TableCell className="font-medium text-[#166534]">
-                        {formatCurrency(record.amount)}
+                        {formatCurrency(entry.amount)}
                       </TableCell>
-                      <TableCell>{formatDisplayDate(record.createdAt)}</TableCell>
+                      <TableCell>{formatDisplayDate(entry.occurredAt)}</TableCell>
                     </TableRow>
                   ))
                 )}

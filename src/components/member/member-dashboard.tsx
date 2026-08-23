@@ -17,7 +17,7 @@ import type { ContributionStats } from "@/lib/contributions/repository";
 import type { MemberMembershipStatus } from "@/lib/membership/status-summary";
 import type { SerializedMember } from "@/types/user";
 import type { SerializedAnnouncement } from "@/types/announcement";
-import type { SerializedWelfareSupport } from "@/types/welfare-support";
+import type { WelfareHistoryEntry } from "@/types/welfare-history";
 import type { WelfareJourneyDashboard } from "@/types/welfare-journey";
 import type { SerializedConstitutionVersion } from "@/types/claims";
 import { ProfileCompletionCard } from "@/components/member/profile-completion-card";
@@ -25,7 +25,8 @@ import { ProfileCompletionCard } from "@/components/member/profile-completion-ca
 interface MemberDashboardProps {
   member: SerializedMember;
   completion: ProfileCompletionResult;
-  welfareRecords: SerializedWelfareSupport[];
+  welfareRecords: WelfareHistoryEntry[];
+  supportTypeLabelMap?: Record<string, string>;
   latestAnnouncement: SerializedAnnouncement | null;
   visibleAnnouncementCount: number;
   contributionStats: ContributionStats;
@@ -50,6 +51,7 @@ export function MemberDashboard({
   member,
   completion,
   welfareRecords,
+  supportTypeLabelMap,
   latestAnnouncement,
   visibleAnnouncementCount,
   contributionStats,
@@ -110,13 +112,16 @@ export function MemberDashboard({
 
           <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
             <CardHeader>
-              <CardTitle>Recent Welfare Support</CardTitle>
+              <CardTitle>Recent Welfare History</CardTitle>
               <CardDescription>
-                Latest welfare assistance granted to you.
+                Latest welfare assistance and paid claim benefits.
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <RecentWelfareSupport records={welfareRecords} />
+              <RecentWelfareSupport
+                entries={welfareRecords}
+                supportTypeLabelMap={supportTypeLabelMap}
+              />
             </CardContent>
           </Card>
 

@@ -18,6 +18,8 @@ import {
   canViewWelfareSupport,
   getWelfareSupportById,
 } from "@/lib/welfare/repository";
+import { getWelfareSupportTypeConfigByCode } from "@/lib/welfare-support-types/repository";
+import { resolveWelfareSupportTypeDisplayName } from "@/lib/welfare-support-types/labels";
 import { formatDisplayDate } from "@/lib/utils/format-date";
 import { formatCurrency } from "@/lib/utils/currency";
 import { Pencil } from "lucide-react";
@@ -59,6 +61,11 @@ export default async function WelfareSupportDetailPage({
   }
 
   const canManage = canManageWelfareSupport(actor.role);
+  const typeConfig = await getWelfareSupportTypeConfigByCode(record.supportType);
+  const supportTypeLabel = resolveWelfareSupportTypeDisplayName(
+    record.supportType,
+    typeConfig ? { [typeConfig.code]: typeConfig.displayName } : null,
+  );
 
   return (
     <AdminPageShell
@@ -96,7 +103,12 @@ export default async function WelfareSupportDetailPage({
             <DetailItem label="Service Number" value={record.serviceNumber} />
             <DetailItem
               label="Support Type"
-              value={<SupportTypeBadge supportType={record.supportType} />}
+              value={
+                <SupportTypeBadge
+                  supportType={record.supportType}
+                  labelMap={{ [record.supportType]: supportTypeLabel }}
+                />
+              }
             />
             <DetailItem
               label="Amount"

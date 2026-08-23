@@ -1,5 +1,7 @@
 import { ActivationStatus, UserRole, UserStatus } from "@/types/enums";
 import type { User } from "@/types/user";
+import { isMemberPortalRoute } from "@/lib/auth/routes";
+import { hasOwnMemberPortalRole } from "@/lib/auth/member-portal-access";
 
 export type LoginValidationCode =
   | "NOT_FOUND"
@@ -78,12 +80,19 @@ export function resolveProtectedRouteAccess(
     return { allowed: true };
   }
 
-  if (role === UserRole.ADMIN || role === UserRole.TREASURER) {
+  if (isMemberPortalRoute(pathname)) {
+    if (!hasOwnMemberPortalRole(role)) {
+      return { allowed: false, redirectTo: "/login" };
+    }
     return { allowed: true };
   }
 
   if (role === UserRole.MEMBER) {
     return { allowed: true };
+  }
+
+  if (canAccessAdminRoute(role)) {
+    return { allowed: false, redirectTo: getLoginRedirectPath(role) };
   }
 
   return { allowed: false, redirectTo: "/login" };

@@ -56,7 +56,7 @@ export default async function MemberNotificationsPage({
     ? parsed.data
     : notificationListQuerySchema.parse({});
 
-  const data = await listNotificationsForUser(actor, query);
+  const data = await listNotificationsForUser(actor, query, "member");
 
   return (
     <MemberPageShell

@@ -6,6 +6,8 @@ import {
   emitNotificationSafe,
   resolveNotificationAudience,
 } from "@/lib/notifications/engine";
+import type { NotificationContext } from "@/lib/notifications/context";
+import { resolveOwnMemberId } from "@/lib/members/member-context";
 import {
   archiveNotification as archiveNotificationForUser,
   getUserReadStateMap,
@@ -146,12 +148,23 @@ function matchesSearch(record: NotificationEvent, search?: string): boolean {
   );
 }
 
-/** Events visible in a user's personal inbox */
+/** Events visible in a user's inbox for the given application context. */
 export function isEventVisibleToUser(
   event: NotificationEvent,
   actor: Pick<CurrentUser, "uid" | "role">,
+  context: NotificationContext = "management",
+  ownMemberId: string | null = null,
 ): boolean {
   const audience = resolveNotificationAudience(event.audience);
+
+  if (context === "member") {
+    const memberId =
+      ownMemberId ?? (actor.role === UserRole.MEMBER ? actor.uid : null);
+    if (!memberId) return false;
+    return (
+      audience === NotificationAudience.MEMBER && event.memberId === memberId
+    );
+  }
 
   if (actor.role === UserRole.MEMBER) {
     return (
@@ -159,12 +172,32 @@ export function isEventVisibleToUser(
     );
   }
 
-  // Administrators / Treasurers: full delivery history
   if (canViewNotifications(actor.role)) {
     return true;
   }
 
   return false;
+}
+
+async function resolveMemberContextId(
+  actor: CurrentUser,
+  context: NotificationContext,
+): Promise<string | null> {
+  if (context !== "member") {
+    return null;
+  }
+  return resolveOwnMemberId(actor);
+}
+
+function filterVisibleEvents(
+  events: NotificationEvent[],
+  actor: CurrentUser,
+  context: NotificationContext,
+  ownMemberId: string | null,
+): NotificationEvent[] {
+  return events.filter((event) =>
+    isEventVisibleToUser(event, actor, context, ownMemberId),
+  );
 }
 
 function countUnreadForUser(
@@ -181,14 +214,19 @@ function countUnreadForUser(
 export async function listNotificationsForUser(
   actor: CurrentUser,
   query: NotificationListQuery,
+  context: NotificationContext = "management",
 ): Promise<NotificationListResult> {
+  const ownMemberId = await resolveMemberContextId(actor, context);
   const [events, readStates] = await Promise.all([
     fetchAllEvents(),
     getUserReadStateMap(actor.uid),
   ]);
 
-  const visibleEvents = events.filter((event) =>
-    isEventVisibleToUser(event, actor),
+  const visibleEvents = filterVisibleEvents(
+    events,
+    actor,
+    context,
+    ownMemberId,
   );
 
   const unreadCount = countUnreadForUser(visibleEvents, readStates);
@@ -226,13 +264,18 @@ export async function listNotificationsForUser(
 
 export async function getUnreadNotificationCount(
   actor: CurrentUser,
+  context: NotificationContext = "management",
 ): Promise<number> {
+  const ownMemberId = await resolveMemberContextId(actor, context);
   const [events, readStates] = await Promise.all([
     fetchAllEvents(),
     getUserReadStateMap(actor.uid),
   ]);
-  const visibleEvents = events.filter((event) =>
-    isEventVisibleToUser(event, actor),
+  const visibleEvents = filterVisibleEvents(
+    events,
+    actor,
+    context,
+    ownMemberId,
   );
   return countUnreadForUser(visibleEvents, readStates);
 }
@@ -240,14 +283,18 @@ export async function getUnreadNotificationCount(
 export async function getRecentUnreadNotifications(
   actor: CurrentUser,
   limit = 5,
+  context: NotificationContext = "management",
 ): Promise<SerializedNotificationEvent[]> {
+  const ownMemberId = await resolveMemberContextId(actor, context);
   const [events, readStates] = await Promise.all([
     fetchAllEvents(),
     getUserReadStateMap(actor.uid),
   ]);
 
   return events
-    .filter((event) => isEventVisibleToUser(event, actor))
+    .filter((event) =>
+      isEventVisibleToUser(event, actor, context, ownMemberId),
+    )
     .filter(
       (event) =>
         resolveUserNotificationStatus(readStates.get(event.id)) ===
@@ -260,7 +307,9 @@ export async function getRecentUnreadNotifications(
 export async function markNotificationAsRead(
   notificationId: string,
   actor: CurrentUser,
+  context: NotificationContext = "management",
 ): Promise<void> {
+  const ownMemberId = await resolveMemberContextId(actor, context);
   const db = getAdminDb();
   const eventDoc = await db
     .collection(COLLECTIONS.NOTIFICATION_EVENTS)
@@ -274,7 +323,7 @@ export async function markNotificationAsRead(
     eventDoc.id,
     eventDoc.data() as Record<string, unknown>,
   );
-  if (!isEventVisibleToUser(event, actor)) {
+  if (!isEventVisibleToUser(event, actor, context, ownMemberId)) {
     throw new Error("You do not have permission to update this notification.");
   }
 
@@ -283,11 +332,16 @@ export async function markNotificationAsRead(
 
 export async function markAllNotificationsAsRead(
   actor: CurrentUser,
+  context: NotificationContext = "management",
 ): Promise<number> {
+  const ownMemberId = await resolveMemberContextId(actor, context);
   const events = await fetchAllEvents();
-  const visibleIds = events
-    .filter((event) => isEventVisibleToUser(event, actor))
-    .map((event) => event.id);
+  const visibleIds = filterVisibleEvents(
+    events,
+    actor,
+    context,
+    ownMemberId,
+  ).map((event) => event.id);
   return markAllNotificationsRead(actor.uid, visibleIds);
 }
 

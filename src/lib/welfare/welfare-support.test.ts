@@ -1,8 +1,6 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it } from "vitest";
 import { WelfareSupportAuditAction } from "@/lib/welfare/audit";
 import { WelfareSupportStatus, WelfareSupportType } from "@/types/enums";
-import type { CreateWelfareSupportInput } from "@/lib/validators/welfare-support";
-import type { CurrentUser } from "@/types/auth";
 import { UserRole } from "@/types/enums";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
 
@@ -39,6 +37,18 @@ describe("welfare support permissions", () => {
 
   it("allows treasurer to create welfare support", () => {
     expect(hasPermission(UserRole.TREASURER, Permission.CREATE_WELFARE_SUPPORT)).toBe(true);
+  });
+
+  it("does NOT allow treasurer to manage welfare support types", () => {
+    expect(
+      hasPermission(UserRole.TREASURER, Permission.MANAGE_WELFARE_SUPPORT_TYPES),
+    ).toBe(false);
+  });
+
+  it("allows admin to manage welfare support types", () => {
+    expect(
+      hasPermission(UserRole.ADMIN, Permission.MANAGE_WELFARE_SUPPORT_TYPES),
+    ).toBe(true);
   });
 
   it("allows treasurer to edit welfare support", () => {

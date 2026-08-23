@@ -1,5 +1,5 @@
 import { getContributionStats } from "@/lib/contributions/repository";
-import { getWelfareSupportStats } from "@/lib/welfare/repository";
+import { getUnifiedWelfarePaidStats } from "@/lib/welfare/history";
 
 export interface FinancialSummary {
   /** Sum of paid contribution amounts */
@@ -39,10 +39,10 @@ export async function getFinancialSummary(
       month: filters.month,
       year: filters.year,
     }),
-    getWelfareSupportStats({
+    getUnifiedWelfarePaidStats({
       memberId: filters.memberId,
-      supportMonth: filters.month,
-      supportYear: filters.year,
+      month: filters.month,
+      year: filters.year,
     }),
   ]);
 

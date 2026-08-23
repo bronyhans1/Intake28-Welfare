@@ -50,7 +50,7 @@ interface AdminDashboardOverviewProps {
   recentNotifications: SerializedNotificationEvent[];
   recentMembers: RecentMemberSummary[];
   recentActivity: RecentActivityItem[];
-  membershipStatus: MemberMembershipStatus;
+  membershipStatus: MemberMembershipStatus | null;
   canManage: boolean;
   progressionInsights: ExecutiveProgressionInsights | null;
 }
@@ -226,7 +226,9 @@ export function AdminDashboardOverview({
         />
       </section>
 
-      <MemberMembershipStatusCard status={membershipStatus} />
+      {membershipStatus ? (
+        <MemberMembershipStatusCard status={membershipStatus} />
+      ) : null}
 
       <MemberServicesCard />
 

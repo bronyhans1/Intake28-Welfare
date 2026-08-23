@@ -89,6 +89,12 @@ describe("resolveMiddlewareAuth", () => {
     });
   });
 
+  it("allows members on member portal routes", () => {
+    expect(
+      resolveMiddlewareAuth("/portal/welfare-support", true, ORIGIN),
+    ).toEqual({ action: "allow" });
+  });
+
   it("never generates /login?next=/login", () => {
     const loginDecision = resolveMiddlewareAuth("/login", false, ORIGIN);
     expect(loginDecision).toEqual({ action: "allow" });

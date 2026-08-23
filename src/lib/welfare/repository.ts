@@ -6,6 +6,10 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { sanitizeFirestoreData, warnInvalidFirestorePayload } from "@/lib/firestore/sanitize";
 import { serializeFirestoreDoc } from "@/lib/firestore/serialize";
 import { WelfareSupportAuditAction } from "@/lib/welfare/audit";
+import {
+  assertSupportTypeAllowedForCreate,
+  assertSupportTypeAllowedForUpdate,
+} from "@/lib/welfare-support-types/repository";
 import type { CreateWelfareSupportInput, UpdateWelfareSupportInput, WelfareSupportListQuery } from "@/lib/validators/welfare-support";
 import { WelfareSupportStatus } from "@/types/enums";
 import type { SerializedWelfareSupport, WelfareSupport } from "@/types/welfare-support";
@@ -52,6 +56,35 @@ async function fetchAllRecords(): Promise<WelfareSupport[]> {
   return snapshot.docs.map((doc) => mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>));
 }
 
+function filterWelfareSupportRecords(
+  records: WelfareSupport[],
+  query: Omit<WelfareSupportListQuery, "page" | "pageSize">,
+): WelfareSupport[] {
+  return records.filter((record) => {
+    if (query.supportType && record.supportType !== query.supportType) return false;
+    if (query.status && record.status !== query.status) return false;
+    if (query.memberId && record.memberId !== query.memberId) return false;
+    if (query.supportYear && record.supportYear !== query.supportYear) return false;
+    if (query.supportMonth && record.supportMonth !== query.supportMonth) return false;
+    if (query.search) {
+      const search = query.search.toLowerCase();
+      const matchesMember = record.memberName.toLowerCase().includes(search);
+      const matchesServiceNumber = record.serviceNumber.toLowerCase().includes(search);
+      const matchesDescription = record.description.toLowerCase().includes(search);
+      if (!matchesMember && !matchesServiceNumber && !matchesDescription) return false;
+    }
+    return true;
+  });
+}
+
+/** All matching welfare support rows (no pagination) — for unified history merge. */
+export async function fetchFilteredWelfareSupport(
+  query: Omit<WelfareSupportListQuery, "page" | "pageSize">,
+): Promise<SerializedWelfareSupport[]> {
+  const records = await fetchAllRecords();
+  return filterWelfareSupportRecords(records, query).map(serializeRecord);
+}
+
 export async function getWelfareSupportById(
   recordId: string,
 ): Promise<SerializedWelfareSupport | null> {
@@ -68,23 +101,7 @@ export async function getWelfareSupportById(
 export async function listWelfareSupport(
   query: WelfareSupportListQuery,
 ): Promise<WelfareSupportListResult> {
-  const records = await fetchAllRecords();
-
-  const filtered = records.filter((record) => {
-    if (query.supportType && record.supportType !== query.supportType) return false;
-    if (query.status && record.status !== query.status) return false;
-    if (query.memberId && record.memberId !== query.memberId) return false;
-    if (query.supportYear && record.supportYear !== query.supportYear) return false;
-    if (query.supportMonth && record.supportMonth !== query.supportMonth) return false;
-    if (query.search) {
-      const search = query.search.toLowerCase();
-      const matchesMember = record.memberName.toLowerCase().includes(search);
-      const matchesServiceNumber = record.serviceNumber.toLowerCase().includes(search);
-      const matchesDescription = record.description.toLowerCase().includes(search);
-      if (!matchesMember && !matchesServiceNumber && !matchesDescription) return false;
-    }
-    return true;
-  });
+  const filtered = filterWelfareSupportRecords(await fetchAllRecords(), query);
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
@@ -99,6 +116,8 @@ export async function createWelfareSupport(
   input: CreateWelfareSupportInput,
   actor: CurrentUser,
 ): Promise<{ recordId: string }> {
+  await assertSupportTypeAllowedForCreate(input.supportType);
+
   const db = getAdminDb();
   const ref = db.collection(COLLECTIONS.WELFARE_SUPPORT).doc();
   const now = new Date();
@@ -156,6 +175,8 @@ export async function updateWelfareSupport(
   }
 
   const existing = mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>);
+
+  await assertSupportTypeAllowedForUpdate(input.supportType, existing.supportType);
 
   const updatePayload = sanitizeFirestoreData({
     supportType: input.supportType,

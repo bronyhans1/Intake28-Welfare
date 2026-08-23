@@ -1,5 +1,5 @@
 import type { Timestamp } from "firebase/firestore";
-import type { WelfareSupportStatus, WelfareSupportType } from "./enums";
+import type { WelfareSupportStatus } from "./enums";
 
 export interface WelfareSupport {
   id: string;
@@ -9,7 +9,8 @@ export interface WelfareSupport {
   memberName: string;
   serviceNumber: string;
 
-  supportType: WelfareSupportType;
+  /** Stable catalog code (e.g. funeral) — not a display label */
+  supportType: string;
 
   /** Raw numeric amount — never store currency symbols */
   amount: number;

@@ -37,6 +37,7 @@ export const ADMIN_ROUTES = [
   "/admin/members/pending",
   "/admin/membership-requests",
   "/admin/welfare-support",
+  "/admin/welfare-support/types",
   "/admin/claims/types",
   "/admin/claims/eligibility",
   "/admin/claims/submitted",
@@ -61,6 +62,7 @@ export const ADMIN_ONLY_ROUTES = [
   "/admin/claims/types",
   "/admin/claims/eligibility",
   "/admin/constitutions",
+  "/admin/welfare-support/types",
 ] as const;
 
 export const TREASURER_ROUTES = [
@@ -102,7 +104,8 @@ export function canAccessRoute(role: UserRole, pathname: string): boolean {
       TREASURER_ROUTES.includes(pathname as (typeof TREASURER_ROUTES)[number]) ||
       pathname.startsWith("/admin/members/") ||
       pathname.startsWith("/admin/membership-requests") ||
-      pathname.startsWith("/admin/welfare-support/") ||
+      (pathname.startsWith("/admin/welfare-support/") &&
+        !pathname.startsWith("/admin/welfare-support/types")) ||
       pathname.startsWith("/admin/contributions/") ||
       pathname.startsWith("/admin/finance/") ||
       pathname.startsWith("/admin/announcements/") ||

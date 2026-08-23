@@ -1,24 +1,12 @@
 import { z } from "zod";
-import { WelfareSupportStatus, WelfareSupportType } from "@/types/enums";
-
-const WELFARE_SUPPORT_TYPES = [
-  WelfareSupportType.FUNERAL,
-  WelfareSupportType.WEDDING,
-  WelfareSupportType.NAMING,
-  WelfareSupportType.MEDICAL,
-  WelfareSupportType.EDUCATION,
-  WelfareSupportType.EMERGENCY,
-  WelfareSupportType.BEREAVEMENT,
-  WelfareSupportType.OTHER,
-] as const;
+import { WelfareSupportStatus } from "@/types/enums";
+import { welfareSupportTypeCodeSchema } from "@/lib/welfare-support-types/validation";
 
 export const createWelfareSupportSchema = z.object({
   memberId: z.string().min(1, "Member is required"),
   memberName: z.string().min(1, "Member name is required"),
   serviceNumber: z.string().min(1, "Service number is required"),
-  supportType: z.enum(WELFARE_SUPPORT_TYPES, {
-    message: "Select a valid support type",
-  }),
+  supportType: welfareSupportTypeCodeSchema,
   amount: z
     .number()
     .positive("Amount must be greater than 0")
@@ -29,9 +17,7 @@ export const createWelfareSupportSchema = z.object({
 export type CreateWelfareSupportInput = z.infer<typeof createWelfareSupportSchema>;
 
 export const updateWelfareSupportSchema = z.object({
-  supportType: z.enum(WELFARE_SUPPORT_TYPES, {
-    message: "Select a valid support type",
-  }),
+  supportType: welfareSupportTypeCodeSchema,
   amount: z
     .number()
     .positive("Amount must be greater than 0")
@@ -41,11 +27,22 @@ export const updateWelfareSupportSchema = z.object({
 
 export type UpdateWelfareSupportInput = z.infer<typeof updateWelfareSupportSchema>;
 
+export const welfareHistorySourceSchema = z.enum([
+  "all",
+  "welfare_support",
+  "claim_payment",
+]);
+
+export type WelfareHistorySourceFilter = z.infer<
+  typeof welfareHistorySourceSchema
+>;
+
 export const welfareSupportListQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(5).max(100).default(10),
   search: z.string().optional(),
-  supportType: z.enum(WELFARE_SUPPORT_TYPES).optional(),
+  source: welfareHistorySourceSchema.optional(),
+  supportType: welfareSupportTypeCodeSchema.optional(),
   status: z
     .enum([
       WelfareSupportStatus.PENDING,
@@ -60,3 +57,6 @@ export const welfareSupportListQuerySchema = z.object({
 });
 
 export type WelfareSupportListQuery = z.infer<typeof welfareSupportListQuerySchema>;
+
+/** Alias for unified welfare + claim payment history queries */
+export type WelfareHistoryListQuery = WelfareSupportListQuery;

@@ -10,7 +10,7 @@ const mockListReceipts = vi.fn();
 vi.mock("@/lib/reports/data", () => ({
   fetchAllContributionsForReport: (...args: unknown[]) =>
     mockFetchAllContributionsForReport(...args),
-  fetchAllWelfareSupportForReport: vi.fn().mockResolvedValue([]),
+  fetchAllWelfareHistoryForReport: vi.fn().mockResolvedValue([]),
   fetchDefaultersForReport: (...args: unknown[]) =>
     mockFetchDefaultersForReport(...args),
 }));

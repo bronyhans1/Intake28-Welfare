@@ -13,7 +13,8 @@ import {
   getFinancialSummaryReport,
   getReportsDashboardSummary,
 } from "@/lib/reports/summary";
-import { listWelfareSupport } from "@/lib/welfare/repository";
+import { listWelfareHistory } from "@/lib/welfare/history";
+import { listAllWelfareSupportTypeOptions } from "@/lib/welfare-support-types/repository";
 import { listReceipts } from "@/lib/receipts/repository";
 import { listMembershipProgressionReportRows } from "@/lib/reports/export/membership-progression";
 import { listOutstandingContributionsReportRows } from "@/lib/reports/export/outstanding-contributions";
@@ -77,6 +78,7 @@ export default async function AdminReportsPage({
     receipts,
     progression,
     outstanding,
+    welfareSupportTypes,
   ] = await Promise.all([
     getReportsDashboardSummary(periodFilters),
     getFinancialSummaryReport(periodFilters),
@@ -88,13 +90,14 @@ export default async function AdminReportsPage({
       memberId: query.memberId,
       contributionType: query.contributionType,
     }),
-    listWelfareSupport({
+    listWelfareHistory({
       page: query.page,
       pageSize: query.pageSize,
       supportMonth: query.month,
       supportYear: query.year,
       memberId: query.memberId,
       supportType: query.supportType,
+      source: "all",
     }),
     listDefaulters({
       page: query.page,
@@ -125,6 +128,7 @@ export default async function AdminReportsPage({
       status: query.status,
       memberId: query.memberId,
     }),
+    listAllWelfareSupportTypeOptions(),
   ]);
 
   return (
@@ -144,6 +148,7 @@ export default async function AdminReportsPage({
           progression={progression}
           outstanding={outstanding}
           members={members.members}
+          welfareSupportTypes={welfareSupportTypes}
           canExport={canExportReports(actor.role)}
         />
       </Suspense>

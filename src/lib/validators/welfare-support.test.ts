@@ -58,19 +58,27 @@ describe("createWelfareSupportSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects invalid support type", () => {
+  it("rejects invalid support type code format", () => {
     const result = createWelfareSupportSchema.safeParse({
       ...validCreate,
-      supportType: "invalid_type",
+      supportType: "Invalid Type",
     });
     expect(result.success).toBe(false);
   });
 
-  it("accepts all valid support types", () => {
+  it("accepts all legacy support type codes", () => {
     for (const type of Object.values(WelfareSupportType)) {
       const result = createWelfareSupportSchema.safeParse({ ...validCreate, supportType: type });
       expect(result.success, `Expected success for type: ${type}`).toBe(true);
     }
+  });
+
+  it("accepts new catalog-style codes beyond the legacy enum", () => {
+    const result = createWelfareSupportSchema.safeParse({
+      ...validCreate,
+      supportType: "naming_ceremony",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("stores amount as a raw number (no currency symbols)", () => {
@@ -123,9 +131,18 @@ describe("welfareSupportListQuerySchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects invalid support type filter", () => {
-    const result = welfareSupportListQuerySchema.safeParse({ supportType: "unknown" });
+  it("rejects invalid support type filter format", () => {
+    const result = welfareSupportListQuerySchema.safeParse({
+      supportType: "Bad Code",
+    });
     expect(result.success).toBe(false);
+  });
+
+  it("accepts catalog-style support type filters", () => {
+    const result = welfareSupportListQuerySchema.safeParse({
+      supportType: "custom_aid",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("accepts memberId filter for future member queries", () => {
@@ -140,5 +157,19 @@ describe("welfareSupportListQuerySchema", () => {
       supportMonth: 6,
     });
     expect(result.success).toBe(true);
+  });
+
+  it("accepts source filter for unified history", () => {
+    const result = welfareSupportListQuerySchema.safeParse({
+      source: "claim_payment",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.source).toBe("claim_payment");
+  });
+
+  it("leaves source undefined when omitted", () => {
+    const result = welfareSupportListQuerySchema.safeParse({});
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.source).toBeUndefined();
   });
 });

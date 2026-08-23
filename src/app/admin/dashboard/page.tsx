@@ -15,7 +15,8 @@ import { canManageMembers, canViewMembers } from "@/lib/members/repository";
 import { getPublishedAnnouncementCount, getRecentPublishedAnnouncements } from "@/lib/announcements/repository";
 import { getRecentUnreadNotifications } from "@/lib/notifications/repository";
 import { getMemberMembershipStatus } from "@/lib/membership/status-summary";
-import { getWelfareSupportStats } from "@/lib/welfare/repository";
+import { resolveOwnMemberId } from "@/lib/members/member-context";
+import { getUnifiedWelfarePaidStats } from "@/lib/welfare/history";
 import { getExecutiveDashboardTitle } from "@/lib/utils/dashboard-title";
 import { getFirstName } from "@/lib/utils/greeting";
 
@@ -53,16 +54,20 @@ export default async function AdminDashboardPage() {
     );
   }
 
+  const ownMemberId = await resolveOwnMemberId(actor);
+
   const [stats, welfareStats, publishedAnnouncementCount, recentAnnouncements, recentNotifications, recentMembers, recentActivity, membershipStatus, progressionInsights] =
     await Promise.all([
       getMemberStats(),
-      getWelfareSupportStats(),
+      getUnifiedWelfarePaidStats(),
       getPublishedAnnouncementCount(),
       getRecentPublishedAnnouncements(5),
       getRecentUnreadNotifications(actor, 5),
       getRecentMembers(10),
       getRecentActivity(10, { sessionUserFullName: actor.fullName }),
-      getMemberMembershipStatus(actor.uid, actor),
+      ownMemberId
+        ? getMemberMembershipStatus(ownMemberId, actor)
+        : Promise.resolve(null),
       getExecutiveProgressionInsights().catch(() => null),
     ]);
 

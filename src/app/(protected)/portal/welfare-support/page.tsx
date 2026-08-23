@@ -3,9 +3,11 @@ import { MemberPageShell } from "@/components/member/member-page-shell";
 import { MemberWelfareSupportTable } from "@/components/member/member-welfare-support";
 import { createPageMetadata } from "@/components/shared/page-placeholder";
 import { getCurrentUserFromSession } from "@/lib/auth/session";
+import { requireOwnMemberPortalAccess } from "@/lib/auth/require-member-portal";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
-import { listWelfareSupport } from "@/lib/welfare/repository";
+import { listMemberWelfareHistory } from "@/lib/welfare/history";
+import { listAllWelfareSupportTypeOptions } from "@/lib/welfare-support-types/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +23,8 @@ export default async function MemberWelfareSupportPage() {
     redirect("/login");
   }
 
+  await requireOwnMemberPortalAccess(actor, "/portal/welfare-support");
+
   if (!hasPermission(actor.role, Permission.VIEW_OWN_WELFARE_SUPPORT)) {
     redirect("/dashboard");
   }
@@ -35,18 +39,26 @@ export default async function MemberWelfareSupportPage() {
     );
   }
 
-  const data = await listWelfareSupport({
-    memberId: actor.uid,
-    page: 1,
-    pageSize: 100,
-  });
+  const [data, supportTypes] = await Promise.all([
+    listMemberWelfareHistory(actor, {
+      page: 1,
+      pageSize: 100,
+    }),
+    listAllWelfareSupportTypeOptions(),
+  ]);
+  const supportTypeLabelMap = Object.fromEntries(
+    supportTypes.map((type) => [type.code, type.displayName]),
+  );
 
   return (
     <MemberPageShell
       title="My Welfare Support"
-      description="Welfare assistance granted to you by the welfare office."
+      description="Welfare assistance and paid claim benefits granted to you."
     >
-      <MemberWelfareSupportTable records={data.records} />
+      <MemberWelfareSupportTable
+        entries={data.entries}
+        supportTypeLabelMap={supportTypeLabelMap}
+      />
     </MemberPageShell>
   );
 }

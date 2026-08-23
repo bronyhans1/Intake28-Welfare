@@ -10,6 +10,7 @@ export const COLLECTIONS = {
   AUDIT_LOGS: "audit_logs",
   SYSTEM: "system",
   WELFARE_SUPPORT: "welfare_support",
+  WELFARE_SUPPORT_TYPE_CONFIGS: "welfare_support_type_configs",
   NOTIFICATION_EVENTS: "notification_events",
   NOTIFICATION_READS: "notification_reads",
   PHONE_VERIFICATIONS: "phone_verifications",

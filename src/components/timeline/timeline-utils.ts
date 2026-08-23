@@ -13,7 +13,10 @@ export function sortTimelineEvents(events: TimelineEvent[]): TimelineEvent[] {
   });
 }
 
-export function formatTimelineDateTime(value: string): string {
+export function formatTimelineDateTime(value: string | null | undefined): string {
+  if (value == null) return "—";
+  if (typeof value !== "string" || !value.trim()) return "—";
+
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
 
