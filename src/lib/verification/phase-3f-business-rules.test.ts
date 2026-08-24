@@ -205,14 +205,20 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
     it("one payment with April+May selected creates two contributions; June stays outstanding", async () => {
       createContribution
         .mockResolvedValueOnce({
-          id: "c-apr",
-          month: 4,
-          year: 2026,
+          contribution: {
+            id: "c-apr",
+            month: 4,
+            year: 2026,
+          },
+          created: true,
         } as never)
         .mockResolvedValueOnce({
-          id: "c-may",
-          month: 5,
-          year: 2026,
+          contribution: {
+            id: "c-may",
+            month: 5,
+            year: 2026,
+          },
+          created: true,
         } as never);
 
       const result = await ensureContributionFromPayment(
@@ -665,9 +671,12 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
 
     it("writes a contribution audit when a month is created from payment", async () => {
       createContribution.mockResolvedValue({
-        id: "c-apr",
-        month: 4,
-        year: 2026,
+        contribution: {
+          id: "c-apr",
+          month: 4,
+          year: 2026,
+        },
+        created: true,
       } as never);
 
       await ensureContributionFromPayment(

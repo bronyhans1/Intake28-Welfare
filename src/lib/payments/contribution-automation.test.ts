@@ -45,9 +45,14 @@ vi.mock("@/lib/system-settings/repository", () => ({
   getMonthlyDuesAmount: vi.fn().mockResolvedValue(50),
 }));
 
+const mockNotifyContributionReceived = vi.fn();
+const mockNotifyPaymentRecorded = vi.fn();
+
 vi.mock("@/lib/notifications/payment-events", () => ({
-  notifyContributionReceived: vi.fn(),
-  notifyPaymentRecorded: vi.fn(),
+  notifyContributionReceived: (...args: unknown[]) =>
+    mockNotifyContributionReceived(...args),
+  notifyPaymentRecorded: (...args: unknown[]) =>
+    mockNotifyPaymentRecorded(...args),
 }));
 
 vi.mock("@/lib/finance/period", () => ({
@@ -125,7 +130,10 @@ describe("ensureContributionFromPayment", () => {
     mockGetContributionByPaymentReference.mockResolvedValue(null);
     mockListContributionsByPaymentReference.mockResolvedValue([]);
     mockFindPaidMonthlyDuesContribution.mockResolvedValue(null);
-    mockCreateAutomatedContribution.mockResolvedValue(createdContribution);
+    mockCreateAutomatedContribution.mockResolvedValue({
+      contribution: createdContribution,
+      created: true,
+    });
     mockEnsureReceiptFromPayment.mockResolvedValue({
       outcome: "created",
       receipt: { id: "receipt-1", receiptNumber: "GIS-RCP-20260618-AB1234" },
@@ -154,16 +162,22 @@ describe("ensureContributionFromPayment", () => {
   it("creates one contribution per selected month", async () => {
     mockCreateAutomatedContribution
       .mockResolvedValueOnce({
-        ...createdContribution,
-        id: "c-sep",
-        month: 9,
-        year: 2026,
+        contribution: {
+          ...createdContribution,
+          id: "c-sep",
+          month: 9,
+          year: 2026,
+        },
+        created: true,
       })
       .mockResolvedValueOnce({
-        ...createdContribution,
-        id: "c-nov",
-        month: 11,
-        year: 2026,
+        contribution: {
+          ...createdContribution,
+          id: "c-nov",
+          month: 11,
+          year: 2026,
+        },
+        created: true,
       });
 
     const result = await ensureContributionFromPayment(
@@ -232,10 +246,13 @@ describe("ensureContributionFromPayment", () => {
     };
 
     mockCreateAutomatedContribution.mockResolvedValue({
-      ...createdContribution,
-      id: "contribution-2",
-      contributionType: ContributionType.SPECIAL_CONTRIBUTION,
-      amount: 100,
+      contribution: {
+        ...createdContribution,
+        id: "contribution-2",
+        contributionType: ContributionType.SPECIAL_CONTRIBUTION,
+        amount: 100,
+      },
+      created: true,
     });
 
     const result = await ensureContributionFromPayment(specialPayment, actor);
@@ -275,9 +292,12 @@ describe("ensureContributionFromPayment", () => {
 
   it("creates special contributions from legacy special payment type aliases", async () => {
     mockCreateAutomatedContribution.mockResolvedValue({
-      ...createdContribution,
-      id: "contribution-legacy",
-      contributionType: ContributionType.SPECIAL_CONTRIBUTION,
+      contribution: {
+        ...createdContribution,
+        id: "contribution-legacy",
+        contributionType: ContributionType.SPECIAL_CONTRIBUTION,
+      },
+      created: true,
     });
 
     const result = await ensureContributionFromPayment(
@@ -291,5 +311,68 @@ describe("ensureContributionFromPayment", () => {
         contributionType: ContributionType.SPECIAL_CONTRIBUTION,
       }),
     );
+  });
+
+  it("does not re-notify when concurrent create loses and returns existing", async () => {
+    mockCreateAutomatedContribution.mockResolvedValue({
+      contribution: createdContribution,
+      created: false,
+    });
+
+    const result = await ensureContributionFromPayment(basePayment, actor);
+
+    expect(result.outcome).toBe("existing");
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    expect(mockNotifyContributionReceived).not.toHaveBeenCalled();
+    expect(mockNotifyPaymentRecorded).not.toHaveBeenCalled();
+    expect(mockEnsureReceiptFromPayment).toHaveBeenCalled();
+  });
+
+  it("concurrent ensureContributionFromPayment calls create once and notify once", async () => {
+    const atomicStore = new Map<string, typeof createdContribution>();
+    let createCalls = 0;
+
+    mockCreateAutomatedContribution.mockImplementation(
+      async (input: {
+        paymentReference: string;
+        month: number;
+        year: number;
+        paymentId: string;
+      }) => {
+        createCalls += 1;
+        const id = `${input.paymentReference}_${input.year}-${String(input.month).padStart(2, "0")}`;
+        // Yield so both callers enter create before either returns.
+        await Promise.resolve();
+
+        if (atomicStore.has(id)) {
+          return { contribution: atomicStore.get(id)!, created: false };
+        }
+        const contribution = {
+          ...createdContribution,
+          id,
+          paymentReference: input.paymentReference,
+          paymentId: input.paymentId,
+          month: input.month,
+          year: input.year,
+        };
+        atomicStore.set(id, contribution);
+        return { contribution, created: true };
+      },
+    );
+
+    const [first, second] = await Promise.all([
+      ensureContributionFromPayment(basePayment, actor),
+      ensureContributionFromPayment(basePayment, actor),
+    ]);
+
+    expect(atomicStore.size).toBe(1);
+    expect(createCalls).toBe(2);
+
+    const outcomes = [first.outcome, second.outcome].sort();
+    expect(outcomes).toEqual(["created", "existing"]);
+    expect(first.contribution?.id).toBe(second.contribution?.id);
+    expect(mockNotifyContributionReceived).toHaveBeenCalledTimes(1);
+    expect(mockNotifyPaymentRecorded).toHaveBeenCalledTimes(1);
+    expect(mockCreateAuditLog).toHaveBeenCalledTimes(1);
   });
 });

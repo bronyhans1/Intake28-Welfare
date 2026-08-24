@@ -146,7 +146,7 @@ export async function ensureContributionFromPayment(
     }
 
     const { month, year } = getCurrentMonthYear();
-    const contribution = await createAutomatedContribution({
+    const { contribution, created } = await createAutomatedContribution({
       memberId: payment.memberId,
       memberName: payment.memberName,
       serviceNumber: payment.serviceNumber,
@@ -159,20 +159,26 @@ export async function ensureContributionFromPayment(
       paymentId: payment.id,
     });
 
-    await logPaymentContributionAudit(payment, actor, {
-      outcome: "created",
-      contributionId: contribution.id,
-      contributionType,
-      amount: payment.amount,
-      month,
-      year,
-    });
+    if (created) {
+      await logPaymentContributionAudit(payment, actor, {
+        outcome: "created",
+        contributionId: contribution.id,
+        contributionType,
+        amount: payment.amount,
+        month,
+        year,
+      });
+      await notifyContributionReceived(contribution, actor);
+      await notifyPaymentRecorded(payment, actor);
+    }
 
     await ensureReceiptFromPayment(payment, contribution, actor);
-    await notifyContributionReceived(contribution, actor);
-    await notifyPaymentRecorded(payment, actor);
 
-    return { outcome: "created", contribution, contributions: [contribution] };
+    return {
+      outcome: created ? "created" : "existing",
+      contribution,
+      contributions: [contribution],
+    };
   }
 
   const targetMonths = resolveTargetMonths(payment);
@@ -206,6 +212,7 @@ export async function ensureContributionFromPayment(
       : amountPerMonth;
 
   const created: SerializedContribution[] = [...existingForPayment];
+  let newlyCreatedCount = 0;
 
   for (const period of targetMonths) {
     const key = monthYearKey(period);
@@ -232,34 +239,37 @@ export async function ensureContributionFromPayment(
       continue;
     }
 
-    const contribution = await createAutomatedContribution({
-      memberId: payment.memberId,
-      memberName: payment.memberName,
-      serviceNumber: payment.serviceNumber,
-      contributionType,
-      amount: unitAmount,
-      month: period.month,
-      year: period.year,
-      source: ContributionSource.PAYSTACK,
-      paymentReference: payment.reference,
-      paymentId: payment.id,
-      remarks: `Paid ${formatMonthYearLabel(period)} contribution.`,
-    });
+    const { contribution, created: wasCreated } =
+      await createAutomatedContribution({
+        memberId: payment.memberId,
+        memberName: payment.memberName,
+        serviceNumber: payment.serviceNumber,
+        contributionType,
+        amount: unitAmount,
+        month: period.month,
+        year: period.year,
+        source: ContributionSource.PAYSTACK,
+        paymentReference: payment.reference,
+        paymentId: payment.id,
+        remarks: `Paid ${formatMonthYearLabel(period)} contribution.`,
+      });
 
     created.push(contribution);
     existingByMonth.set(key, contribution);
 
-    await logPaymentContributionAudit(payment, actor, {
-      outcome: "created",
-      contributionId: contribution.id,
-      contributionType,
-      amount: unitAmount,
-      month: period.month,
-      year: period.year,
-      selectedMonths: targetMonths,
-    });
-
-    await notifyContributionReceived(contribution, actor);
+    if (wasCreated) {
+      newlyCreatedCount += 1;
+      await logPaymentContributionAudit(payment, actor, {
+        outcome: "created",
+        contributionId: contribution.id,
+        contributionType,
+        amount: unitAmount,
+        month: period.month,
+        year: period.year,
+        selectedMonths: targetMonths,
+      });
+      await notifyContributionReceived(contribution, actor);
+    }
   }
 
   if (created.length === 0) {
@@ -271,9 +281,10 @@ export async function ensureContributionFromPayment(
   }
 
   await ensureReceiptFromPayment(payment, created[0], actor);
-  await notifyPaymentRecorded(payment, actor);
 
-  const newlyCreatedCount = created.length - existingForPayment.length;
+  if (newlyCreatedCount > 0) {
+    await notifyPaymentRecorded(payment, actor);
+  }
 
   return {
     outcome:

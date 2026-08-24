@@ -121,11 +121,40 @@ export interface AutomatedContributionInput {
   remarks?: string | null;
 }
 
+export interface AutomatedContributionResult {
+  contribution: SerializedContribution;
+  created: boolean;
+}
+
+/**
+ * Deterministic Firestore document ID for Paystack-automated contributions.
+ * One payment reference + month/year → one contribution document.
+ * Historical manual/random-ID contributions are unchanged.
+ */
+export function buildAutomatedContributionDocumentId(
+  paymentReference: string,
+  month: number,
+  year: number,
+): string {
+  const trimmed = paymentReference.trim();
+  const paddedMonth = String(month).padStart(2, "0");
+  return `${trimmed}_${year}-${paddedMonth}`;
+}
+
+/**
+ * Atomically create-or-return an automated contribution for a Paystack payment.
+ * Concurrent callers for the same payment+month share one document via transaction.create.
+ */
 export async function createAutomatedContribution(
   input: AutomatedContributionInput,
-): Promise<SerializedContribution> {
+): Promise<AutomatedContributionResult> {
   const db = getAdminDb();
-  const ref = db.collection(COLLECTIONS.CONTRIBUTIONS).doc();
+  const documentId = buildAutomatedContributionDocumentId(
+    input.paymentReference,
+    input.month,
+    input.year,
+  );
+  const ref = db.collection(COLLECTIONS.CONTRIBUTIONS).doc(documentId);
   const reporting = deriveReportingFields(input);
 
   const document = sanitizeFirestoreData({
@@ -152,19 +181,37 @@ export async function createAutomatedContribution(
   });
 
   warnInvalidFirestorePayload("createAutomatedContribution", document);
-  await ref.set(document);
 
-  const created = await getContributionById(ref.id);
-  if (!created) {
+  const existingBefore = await ref.get();
+  if (existingBefore.exists) {
+    const existing = serializeRecord(
+      mapFirestoreDoc(existingBefore.id, existingBefore.data() as Record<string, unknown>),
+    );
+    return { contribution: existing, created: false };
+  }
+
+  const created = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(ref);
+    if (snapshot.exists) {
+      return false;
+    }
+    transaction.create(ref, document);
+    return true;
+  });
+
+  const finalDoc = await getContributionById(ref.id);
+  if (!finalDoc) {
     throw new Error("Failed to create contribution from payment.");
   }
 
-  const { recalculateMembershipProgression } = await import(
-    "@/lib/progression"
-  );
-  await recalculateMembershipProgression(input.memberId);
+  if (created) {
+    const { recalculateMembershipProgression } = await import(
+      "@/lib/progression"
+    );
+    await recalculateMembershipProgression(input.memberId);
+  }
 
-  return created;
+  return { contribution: finalDoc, created };
 }
 
 export async function listContributions(
