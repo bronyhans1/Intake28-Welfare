@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { CreditCard, History } from "lucide-react";
+import { ChevronDown, CreditCard, History } from "lucide-react";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { buttonVariants } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/select";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
-import { formatPaymentAmountInput } from "@/lib/payments/resolve-amount";
 import { formatCurrency } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 import {
@@ -49,6 +48,14 @@ function periodKey(item: { month: number; year: number }): string {
   return monthYearKey(item);
 }
 
+function PaymentDueBadge() {
+  return (
+    <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800">
+      Payment Due
+    </span>
+  );
+}
+
 export function MemberOutstandingContributionsPayment({
   memberId,
   monthlyDuesAmount,
@@ -60,10 +67,14 @@ export function MemberOutstandingContributionsPayment({
     () => [...arrears, ...(current ? [current] : [])],
     [arrears, current],
   );
+  const hasArrears = arrears.length > 0;
+  const showMultiMonthSection = hasArrears;
 
   const [selectedKeys, setSelectedKeys] = useState<string[]>(() =>
     allOutstanding.map((item) => periodKey(item)),
   );
+  const [multiMonthExpanded, setMultiMonthExpanded] = useState(false);
+  const [specialSectionExpanded, setSpecialSectionExpanded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [specialAmount, setSpecialAmount] = useState("");
@@ -121,12 +132,13 @@ export function MemberOutstandingContributionsPayment({
     setSelectedKeys(allOutstanding.map((item) => periodKey(item)));
   }
 
-  async function handlePaySelected() {
-    if (selectedMonths.length === 0) {
+  async function handlePayMonths(months: OutstandingMonthItem[]) {
+    if (months.length === 0) {
       setError("Select at least one contribution month.");
       return;
     }
 
+    const amount = months.length * monthlyDuesAmount;
     setError(null);
     setIsSubmitting(true);
 
@@ -137,11 +149,11 @@ export function MemberOutstandingContributionsPayment({
         body: JSON.stringify({
           memberId,
           paymentType: PaymentType.MONTHLY_DUES,
-          selectedMonths: selectedMonths.map((item) => ({
+          selectedMonths: months.map((item) => ({
             month: item.month,
             year: item.year,
           })),
-          amount: totalAmount,
+          amount,
         }),
       });
 
@@ -163,6 +175,15 @@ export function MemberOutstandingContributionsPayment({
       );
       setIsSubmitting(false);
     }
+  }
+
+  async function handlePayCurrentMonth() {
+    if (!current) return;
+    await handlePayMonths([current]);
+  }
+
+  async function handlePaySelected() {
+    await handlePayMonths(selectedMonths);
   }
 
   async function handleOtherPayment() {
@@ -205,17 +226,21 @@ export function MemberOutstandingContributionsPayment({
     }
   }
 
+  const multiMonthToggleLabel = current
+    ? "Pay multiple months or arrears"
+    : "Pay outstanding months";
+
   return (
     <div className="mb-6 space-y-4">
       <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm sm:p-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">
-              Outstanding Contributions
+              Monthly Welfare Contributions
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pay unpaid monthly dues from your join month onwards. Each month
-              can only be paid once.
+              Pay your regular monthly welfare contribution. Each month can only
+              be paid once.
             </p>
           </div>
           <Link
@@ -234,30 +259,130 @@ export function MemberOutstandingContributionsPayment({
           </p>
         ) : (
           <div className="mt-5 space-y-5">
-            {arrears.length > 0 ? (
-              <section className="space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Outstanding Contributions
-                  </h3>
-                  <button
-                    type="button"
-                    className="text-sm font-medium text-[#166534] hover:underline"
-                    onClick={selectAllOutstanding}
-                  >
-                    Select All Outstanding
-                  </button>
+            {current ? (
+              <section className="rounded-xl border border-[#166534]/20 bg-[#166534]/[0.03] p-4 sm:p-5">
+                <p className="text-xs font-semibold tracking-wide text-[#166534] uppercase">
+                  Monthly Welfare Contribution
+                </p>
+                <p className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                  {current.label}
+                </p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Your regular monthly welfare contribution
+                </p>
+                <p className="mt-3 text-xl font-semibold text-[#166534] sm:text-2xl">
+                  {formatCurrency(current.amount)}
+                </p>
+                <div className="mt-3">
+                  <PaymentDueBadge />
                 </div>
-                <ul className="space-y-2">
-                  {arrears.map((item) => {
-                    const key = periodKey(item);
-                    const checked = selectedKeys.includes(key);
-                    return (
-                      <li key={key}>
+                <div className="mt-4">
+                  <LoadingButton
+                    type="button"
+                    onClick={handlePayCurrentMonth}
+                    loading={isSubmitting}
+                    loadingText="Processing…"
+                    className="w-full bg-[#166534] text-white hover:bg-[#14532d] sm:w-auto"
+                  >
+                    <CreditCard className="size-4" />
+                    Pay {current.label} Contribution
+                  </LoadingButton>
+                </div>
+              </section>
+            ) : null}
+
+            {showMultiMonthSection ? (
+              <section className="space-y-3">
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Previous Unpaid Months
+                  </h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {current
+                      ? "You also have previous unpaid months."
+                      : "You have previous unpaid monthly contributions."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className={cn(
+                    buttonVariants({ variant: "outline" }),
+                    "w-full justify-between sm:w-auto",
+                  )}
+                  aria-expanded={multiMonthExpanded}
+                  onClick={() => setMultiMonthExpanded((open) => !open)}
+                >
+                  {multiMonthToggleLabel}
+                  <ChevronDown
+                    className={cn(
+                      "size-4 transition-transform",
+                      multiMonthExpanded ? "rotate-180" : "",
+                    )}
+                  />
+                </button>
+
+                {multiMonthExpanded ? (
+                  <div className="space-y-5 border-t border-black/[0.06] pt-5">
+                    {hasArrears ? (
+                      <div className="space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h4 className="text-sm font-semibold text-foreground">
+                            Select months to pay
+                          </h4>
+                          <button
+                            type="button"
+                            className="text-sm font-medium text-[#166534] hover:underline"
+                            onClick={selectAllOutstanding}
+                          >
+                            Select All Outstanding
+                          </button>
+                        </div>
+                        <ul className="space-y-2">
+                          {arrears.map((item) => {
+                            const key = periodKey(item);
+                            const checked = selectedKeys.includes(key);
+                            return (
+                              <li key={key}>
+                                <label
+                                  className={cn(
+                                    "flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm",
+                                    checked
+                                      ? "border-[#166534]/30 bg-[#166534]/[0.04]"
+                                      : "border-black/[0.08] bg-white",
+                                  )}
+                                >
+                                  <span className="flex items-center gap-3">
+                                    <input
+                                      type="checkbox"
+                                      className="size-4 accent-[#166534]"
+                                      checked={checked}
+                                      onChange={() => toggleMonth(key)}
+                                    />
+                                    <span className="font-medium text-foreground">
+                                      {item.label}
+                                    </span>
+                                  </span>
+                                  <span className="font-medium text-foreground">
+                                    {formatCurrency(item.amount)}
+                                  </span>
+                                </label>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {current ? (
+                      <div className="space-y-3">
+                        <h4 className="text-sm font-semibold text-foreground">
+                          Current month
+                        </h4>
                         <label
                           className={cn(
                             "flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm",
-                            checked
+                            selectedKeys.includes(periodKey(current))
                               ? "border-[#166534]/30 bg-[#166534]/[0.04]"
                               : "border-black/[0.08] bg-white",
                           )}
@@ -266,197 +391,191 @@ export function MemberOutstandingContributionsPayment({
                             <input
                               type="checkbox"
                               className="size-4 accent-[#166534]"
-                              checked={checked}
-                              onChange={() => toggleMonth(key)}
+                              checked={selectedKeys.includes(periodKey(current))}
+                              onChange={() => toggleMonth(periodKey(current))}
                             />
                             <span className="font-medium text-foreground">
-                              {item.label}
+                              {current.label}
                             </span>
                           </span>
                           <span className="font-medium text-foreground">
-                            {formatCurrency(item.amount)}
+                            {formatCurrency(current.amount)}
                           </span>
                         </label>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </section>
-            ) : null}
+                      </div>
+                    ) : null}
 
-            {current ? (
-              <section className="space-y-3">
-                <h3 className="text-sm font-semibold text-foreground">
-                  Current Contribution
-                </h3>
-                <label
-                  className={cn(
-                    "flex cursor-pointer items-center justify-between gap-3 rounded-xl border px-3 py-3 text-sm",
-                    selectedKeys.includes(periodKey(current))
-                      ? "border-[#166534]/30 bg-[#166534]/[0.04]"
-                      : "border-black/[0.08] bg-white",
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      className="size-4 accent-[#166534]"
-                      checked={selectedKeys.includes(periodKey(current))}
-                      onChange={() => toggleMonth(periodKey(current))}
-                    />
-                    <span className="font-medium text-foreground">
-                      {current.label}
-                    </span>
-                  </span>
-                  <span className="font-medium text-foreground">
-                    {formatCurrency(current.amount)}
-                  </span>
-                </label>
-              </section>
-            ) : null}
+                    <div className="rounded-xl border border-black/[0.08] bg-muted/20 px-4 py-4">
+                      <p className="text-sm font-medium text-foreground">
+                        You are about to pay
+                      </p>
+                      {selectedMonths.length === 0 ? (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          No months selected.
+                        </p>
+                      ) : (
+                        <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                          {selectedMonths.map((item) => (
+                            <li key={periodKey(item)}>• {item.label}</li>
+                          ))}
+                        </ul>
+                      )}
+                      <p className="mt-3 text-base font-semibold text-foreground">
+                        Total {formatCurrency(totalAmount)}
+                      </p>
 
-            <div className="rounded-xl border border-black/[0.08] bg-muted/20 px-4 py-4">
-              <p className="text-sm font-medium text-foreground">
-                You are about to pay
-              </p>
-              {selectedMonths.length === 0 ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  No months selected.
-                </p>
-              ) : (
-                <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
-                  {selectedMonths.map((item) => (
-                    <li key={periodKey(item)}>• {item.label}</li>
-                  ))}
-                </ul>
-              )}
-              <p className="mt-3 text-base font-semibold text-foreground">
-                Total {formatCurrency(totalAmount)}
-              </p>
+                      <div className="mt-4 border-t border-black/[0.06] pt-3 text-sm">
+                        <p className="font-medium text-foreground">
+                          Estimated Progression Update
+                        </p>
+                        <p className="mt-1 text-muted-foreground">
+                          Benefit Percentage{" "}
+                          <span className="font-medium text-foreground">
+                            {estimate.before.benefitPercentage}%
+                          </span>{" "}
+                          →{" "}
+                          <span className="font-medium text-foreground">
+                            {estimate.after.benefitPercentage}%
+                          </span>
+                        </p>
+                        <p className="mt-1 text-muted-foreground">
+                          Welfare Points{" "}
+                          <span className="font-medium text-foreground">
+                            {estimate.before.welfarePoints}
+                          </span>{" "}
+                          →{" "}
+                          <span className="font-medium text-foreground">
+                            {estimate.after.welfarePoints}
+                          </span>
+                        </p>
+                        {estimate.before.membershipStatus !==
+                        estimate.after.membershipStatus ? (
+                          <p className="mt-1 text-muted-foreground">
+                            Membership Status{" "}
+                            <span className="font-medium text-foreground">
+                              {estimate.before.membershipStatus}
+                            </span>{" "}
+                            →{" "}
+                            <span className="font-medium text-foreground">
+                              {estimate.after.membershipStatus}
+                            </span>
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Estimate only. Final progression updates after
+                          successful payment verification.
+                        </p>
+                      </div>
+                    </div>
 
-              <div className="mt-4 border-t border-black/[0.06] pt-3 text-sm">
-                <p className="font-medium text-foreground">
-                  Estimated Progression Update
-                </p>
-                <p className="mt-1 text-muted-foreground">
-                  Benefit Percentage{" "}
-                  <span className="font-medium text-foreground">
-                    {estimate.before.benefitPercentage}%
-                  </span>{" "}
-                  →{" "}
-                  <span className="font-medium text-foreground">
-                    {estimate.after.benefitPercentage}%
-                  </span>
-                </p>
-                <p className="mt-1 text-muted-foreground">
-                  Welfare Points{" "}
-                  <span className="font-medium text-foreground">
-                    {estimate.before.welfarePoints}
-                  </span>{" "}
-                  →{" "}
-                  <span className="font-medium text-foreground">
-                    {estimate.after.welfarePoints}
-                  </span>
-                </p>
-                {estimate.before.membershipStatus !==
-                estimate.after.membershipStatus ? (
-                  <p className="mt-1 text-muted-foreground">
-                    Membership Status{" "}
-                    <span className="font-medium text-foreground">
-                      {estimate.before.membershipStatus}
-                    </span>{" "}
-                    →{" "}
-                    <span className="font-medium text-foreground">
-                      {estimate.after.membershipStatus}
-                    </span>
-                  </p>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={cn(buttonVariants({ variant: "outline" }))}
+                        onClick={selectAllIncludingCurrent}
+                      >
+                        Select All
+                      </button>
+                      <LoadingButton
+                        type="button"
+                        onClick={handlePaySelected}
+                        loading={isSubmitting}
+                        loadingText="Processing…"
+                        disabled={selectedMonths.length === 0}
+                        className="bg-[#166534] text-white hover:bg-[#14532d]"
+                      >
+                        <CreditCard className="size-4" />
+                        Pay Selected Months
+                      </LoadingButton>
+                    </div>
+                  </div>
                 ) : null}
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Estimate only. Final progression updates after successful
-                  payment verification.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className={cn(buttonVariants({ variant: "outline" }))}
-                onClick={selectAllIncludingCurrent}
-              >
-                Select All
-              </button>
-              <LoadingButton
-                type="button"
-                onClick={handlePaySelected}
-                loading={isSubmitting}
-                loadingText="Processing…"
-                disabled={selectedMonths.length === 0}
-                className="bg-[#166534] text-white hover:bg-[#14532d]"
-              >
-                <CreditCard className="size-4" />
-                Pay Selected Months
-              </LoadingButton>
-            </div>
+              </section>
+            ) : null}
           </div>
         )}
 
         {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
       </div>
 
-      <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm">
-        <h3 className="text-sm font-semibold text-foreground">Other Payments</h3>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Special contributions and other non-monthly payments.
+      <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm sm:p-5">
+        <h3 className="text-sm font-semibold text-foreground">
+          Special Contribution
+        </h3>
+        <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Only use this option when instructed by the Welfare Team. Do not use
+          this to pay your regular monthly contribution.
         </p>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="other-amount">Amount (GHS)</Label>
-            <Input
-              id="other-amount"
-              type="number"
-              min={1}
-              step="0.01"
-              value={specialAmount}
-              onChange={(event) => setSpecialAmount(event.target.value)}
-              placeholder={formatPaymentAmountInput(monthlyDuesAmount)}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label>Payment Type</Label>
-            <Select
-              value={otherPaymentType}
-              onValueChange={(value) =>
-                setOtherPaymentType(value ?? PaymentType.SPECIAL_CONTRIBUTION)
-              }
+
+        {!specialSectionExpanded ? (
+          <div className="mt-4">
+            <button
+              type="button"
+              className={cn(buttonVariants({ variant: "outline" }), "w-full sm:w-auto")}
+              onClick={() => setSpecialSectionExpanded(true)}
             >
-              <SelectTrigger>
-                <SelectValue>
-                  {PAYMENT_TYPE_LABELS[otherPaymentType as PaymentType]}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={PaymentType.SPECIAL_CONTRIBUTION}>
-                  {PAYMENT_TYPE_LABELS[PaymentType.SPECIAL_CONTRIBUTION]}
-                </SelectItem>
-                <SelectItem value={PaymentType.OTHER}>
-                  {PAYMENT_TYPE_LABELS[PaymentType.OTHER]}
-                </SelectItem>
-              </SelectContent>
-            </Select>
+              Make a Special Contribution
+            </button>
           </div>
-        </div>
-        <div className="mt-4">
-          <LoadingButton
-            type="button"
-            variant="outline"
-            onClick={handleOtherPayment}
-            loading={isOtherSubmitting}
-            loadingText="Processing…"
-          >
-            Pay Other Contribution
-          </LoadingButton>
-        </div>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="other-amount">Special contribution amount (GHS)</Label>
+                <Input
+                  id="other-amount"
+                  type="number"
+                  min={1}
+                  step="0.01"
+                  value={specialAmount}
+                  onChange={(event) => setSpecialAmount(event.target.value)}
+                  placeholder="Enter amount"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Payment Type</Label>
+                <Select
+                  value={otherPaymentType}
+                  onValueChange={(value) =>
+                    setOtherPaymentType(value ?? PaymentType.SPECIAL_CONTRIBUTION)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue>
+                      {PAYMENT_TYPE_LABELS[otherPaymentType as PaymentType]}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={PaymentType.SPECIAL_CONTRIBUTION}>
+                      {PAYMENT_TYPE_LABELS[PaymentType.SPECIAL_CONTRIBUTION]}
+                    </SelectItem>
+                    <SelectItem value={PaymentType.OTHER}>
+                      {PAYMENT_TYPE_LABELS[PaymentType.OTHER]}
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <LoadingButton
+                type="button"
+                variant="outline"
+                onClick={handleOtherPayment}
+                loading={isOtherSubmitting}
+                loadingText="Processing…"
+              >
+                Pay Special Contribution
+              </LoadingButton>
+              <button
+                type="button"
+                className={cn(buttonVariants({ variant: "ghost", size: "sm" }))}
+                onClick={() => setSpecialSectionExpanded(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
