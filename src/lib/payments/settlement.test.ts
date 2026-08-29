@@ -87,6 +87,40 @@ const memberActor = {
   profileCompletionPercentage: 100,
 };
 
+function makeVerifyResponse(
+  overrides: Partial<{
+    status: PaymentStatus;
+    providerReference: string;
+    amount: number;
+    requestedAmount: number | null;
+    fees: number | null;
+    currency: string;
+    paidAt: Date | null;
+  }> = {},
+) {
+  return {
+    status: PaymentStatus.SUCCESS,
+    providerReference: reference,
+    amount: 5000,
+    requestedAmount: 5000,
+    fees: 0,
+    currency: "GHS",
+    paidAt: new Date("2026-06-17T11:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function mockSuccessfulSettlement(
+  paymentOverrides: Partial<SerializedPayment> = {},
+  verifyOverrides: Parameters<typeof makeVerifyResponse>[0] = {},
+) {
+  mockGetPaymentByReference.mockResolvedValue(makePayment(paymentOverrides));
+  mockPaystackVerify.mockResolvedValue(makeVerifyResponse(verifyOverrides));
+  mockUpdatePaymentStatus.mockResolvedValue(
+    makePayment({ status: PaymentStatus.SUCCESS, ...paymentOverrides }),
+  );
+}
+
 describe("paystack amount conversion", () => {
   it("converts GHS 50.00 to 5000 pesewas", () => {
     expect(toPaystackMinorUnits(50)).toBe(5000);
@@ -160,21 +194,155 @@ describe("settlePaymentFromPaystackReference", () => {
     ).resolves.toMatchObject({ outcome: "settled" });
   });
 
-  it("C. rejects a wrong Paystack amount", async () => {
+  it("C. rejects underpaid Paystack business amount via requested_amount", async () => {
     mockGetPaymentByReference.mockResolvedValue(makePayment({ amount: 50 }));
-    mockPaystackVerify.mockResolvedValue({
-      status: PaymentStatus.SUCCESS,
-      providerReference: reference,
-      amount: 4999,
-      currency: "GHS",
-      paidAt: new Date("2026-06-17T11:00:00.000Z"),
-    });
+    mockPaystackVerify.mockResolvedValue(
+      makeVerifyResponse({
+        amount: 4999,
+        requestedAmount: 4999,
+        fees: 0,
+      }),
+    );
 
     await expect(settlePaymentFromPaystackReference(reference)).rejects.toThrow(
       PaymentSettlementError,
     );
     expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
     expect(mockEnsureContributionFromPayment).not.toHaveBeenCalled();
+  });
+
+  describe("Paystack business amount validation", () => {
+    it("TEST 1. accepts exact business amount with no fee gross-up", async () => {
+      mockSuccessfulSettlement(
+        { amount: 50 },
+        { amount: 5000, requestedAmount: 5000, fees: 0 },
+      );
+
+      await expect(
+        settlePaymentFromPaystackReference(reference),
+      ).resolves.toMatchObject({ outcome: "settled" });
+    });
+
+    it("TEST 2. accepts customer fee gross-up (production Mobile Money scenario)", async () => {
+      mockSuccessfulSettlement(
+        { amount: 50 },
+        { amount: 5100, requestedAmount: 5000, fees: 100 },
+      );
+
+      const result = await settlePaymentFromPaystackReference(reference, {
+        source: "webhook",
+      });
+
+      expect(result.outcome).toBe("settled");
+      expect(mockEnsureContributionFromPayment).toHaveBeenCalledTimes(1);
+      expect(mockCreateAuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            amount: 50,
+            paystackAmount: 5100,
+            paystackRequestedAmount: 5000,
+            paystackFees: 100,
+            paystackBusinessAmount: 5000,
+          }),
+        }),
+      );
+    });
+
+    it("TEST 3. rejects underpaid requested_amount", async () => {
+      mockGetPaymentByReference.mockResolvedValue(makePayment({ amount: 50 }));
+      mockPaystackVerify.mockResolvedValue(
+        makeVerifyResponse({
+          amount: 4999,
+          requestedAmount: 4999,
+          fees: 0,
+        }),
+      );
+
+      await expect(settlePaymentFromPaystackReference(reference)).rejects.toThrow(
+        PaymentSettlementError,
+      );
+      expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
+    });
+
+    it("TEST 4. accepts derived business amount when requested_amount is missing", async () => {
+      mockSuccessfulSettlement(
+        { amount: 50 },
+        { amount: 5100, requestedAmount: null, fees: 100 },
+      );
+
+      await expect(
+        settlePaymentFromPaystackReference(reference),
+      ).resolves.toMatchObject({ outcome: "settled" });
+    });
+
+    it("TEST 5. rejects derived business amount that does not match expected", async () => {
+      mockGetPaymentByReference.mockResolvedValue(makePayment({ amount: 50 }));
+      mockPaystackVerify.mockResolvedValue(
+        makeVerifyResponse({
+          amount: 5100,
+          requestedAmount: null,
+          fees: 50,
+        }),
+      );
+
+      await expect(settlePaymentFromPaystackReference(reference)).rejects.toThrow(
+        PaymentSettlementError,
+      );
+      expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
+    });
+
+    it("TEST 6. still rejects wrong currency with fee gross-up", async () => {
+      mockGetPaymentByReference.mockResolvedValue(makePayment({ amount: 50 }));
+      mockPaystackVerify.mockResolvedValue(
+        makeVerifyResponse({
+          amount: 5100,
+          requestedAmount: 5000,
+          fees: 100,
+          currency: "NGN",
+        }),
+      );
+
+      await expect(settlePaymentFromPaystackReference(reference)).rejects.toThrow(
+        "Paystack currency does not match the expected payment currency.",
+      );
+      expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
+    });
+
+    it("TEST 8. repeated settlement after SUCCESS remains idempotent", async () => {
+      const successPayment = makePayment({
+        status: PaymentStatus.SUCCESS,
+        providerReference: reference,
+      });
+      mockGetPaymentByReference.mockResolvedValue(successPayment);
+
+      const first = await settlePaymentFromPaystackReference(reference, {
+        source: "webhook",
+      });
+      const second = await settlePaymentFromPaystackReference(reference, {
+        source: "callback",
+      });
+
+      expect(first.outcome).toBe("already_settled");
+      expect(second.outcome).toBe("already_settled");
+      expect(mockPaystackVerify).not.toHaveBeenCalled();
+      expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
+    });
+
+    it("TEST 9. concurrent callback and webhook settlement accept fee gross-up", async () => {
+      mockSuccessfulSettlement(
+        { amount: 50 },
+        { amount: 5100, requestedAmount: 5000, fees: 100 },
+      );
+
+      const [callbackResult, webhookResult] = await Promise.all([
+        settlePaymentFromPaystackReference(reference, { source: "callback" }),
+        settlePaymentFromPaystackReference(reference, { source: "webhook" }),
+      ]);
+
+      expect(callbackResult.outcome).toBe("settled");
+      expect(webhookResult.outcome).toBe("settled");
+      expect(mockEnsureContributionFromPayment).toHaveBeenCalled();
+    });
   });
 
   it("D. accepts the correct Paystack currency", async () => {

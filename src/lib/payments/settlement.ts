@@ -7,6 +7,7 @@ import {
 import {
   paystackVerifyTransaction,
   PaystackRequestError,
+  type PaystackVerifiedTransaction,
 } from "@/lib/integrations/paystack/client";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import { ensureContributionFromPayment } from "@/lib/payments/contribution-automation";
@@ -73,12 +74,38 @@ function validatePaystackReference(
   }
 }
 
-function validatePaystackAmount(
+function resolvePaystackBusinessAmountMinor(
+  verification: Pick<
+    PaystackVerifiedTransaction,
+    "amount" | "requestedAmount" | "fees"
+  >,
+): number {
+  if (verification.requestedAmount != null) {
+    return verification.requestedAmount;
+  }
+  if (verification.fees != null) {
+    return verification.amount - verification.fees;
+  }
+  return verification.amount;
+}
+
+function validatePaystackBusinessAmount(
   payment: SerializedPayment,
-  paystackAmountMinor: number,
+  verification: Pick<
+    PaystackVerifiedTransaction,
+    "amount" | "requestedAmount" | "fees"
+  >,
 ): void {
   const expectedMinor = toPaystackMinorUnits(payment.amount);
-  if (paystackAmountMinor !== expectedMinor) {
+  const businessMinor = resolvePaystackBusinessAmountMinor(verification);
+
+  if (businessMinor < expectedMinor) {
+    throw new PaymentSettlementError(
+      "Paystack amount does not match the expected payment amount.",
+    );
+  }
+
+  if (businessMinor !== expectedMinor) {
     throw new PaymentSettlementError(
       "Paystack amount does not match the expected payment amount.",
     );
@@ -184,7 +211,7 @@ export async function settlePaymentFromPaystackReference(
     };
   }
 
-  validatePaystackAmount(payment, verification.amount);
+  validatePaystackBusinessAmount(payment, verification);
   validatePaystackCurrency(payment, verification.currency);
 
   const updated = await updatePaymentStatus(trimmedReference, {
@@ -209,6 +236,9 @@ export async function settlePaymentFromPaystackReference(
       providerReference: verification.providerReference,
       settlementSource: source,
       paystackAmount: verification.amount,
+      paystackRequestedAmount: verification.requestedAmount,
+      paystackFees: verification.fees,
+      paystackBusinessAmount: resolvePaystackBusinessAmountMinor(verification),
       paystackCurrency: verification.currency,
     },
   });

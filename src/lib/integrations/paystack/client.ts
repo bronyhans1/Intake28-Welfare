@@ -32,9 +32,38 @@ interface PaystackVerifyResponse {
     status: string;
     reference: string;
     amount: number;
+    requested_amount?: number | null;
+    fees?: number | null;
     currency: string;
     paid_at?: string | null;
   };
+}
+
+export interface PaystackVerifiedTransaction {
+  status: PaymentStatus;
+  providerReference: string;
+  /** Total amount charged to the customer (minor units). */
+  amount: number;
+  /** Original business amount before fee gross-up (minor units), when provided. */
+  requestedAmount: number | null;
+  /** Paystack processing fee (minor units), when provided. */
+  fees: number | null;
+  currency: string;
+  paidAt: Date | null;
+}
+
+function parseOptionalMinorUnits(value: unknown): number | null {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function getPaystackSecretKey(): string {
@@ -99,13 +128,9 @@ export async function paystackInitializeTransaction(input: {
   return { authorizationUrl: payload.data.authorization_url };
 }
 
-export async function paystackVerifyTransaction(reference: string): Promise<{
-  status: PaymentStatus;
-  providerReference: string;
-  amount: number;
-  currency: string;
-  paidAt: Date | null;
-}> {
+export async function paystackVerifyTransaction(
+  reference: string,
+): Promise<PaystackVerifiedTransaction> {
   const response = await fetch(
     `https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`,
     {
@@ -126,6 +151,8 @@ export async function paystackVerifyTransaction(reference: string): Promise<{
     status: mapPaystackStatus(payload.data.status),
     providerReference: payload.data.reference,
     amount: payload.data.amount,
+    requestedAmount: parseOptionalMinorUnits(payload.data.requested_amount),
+    fees: parseOptionalMinorUnits(payload.data.fees),
     currency: payload.data.currency,
     paidAt: payload.data.paid_at ? new Date(payload.data.paid_at) : null,
   };
