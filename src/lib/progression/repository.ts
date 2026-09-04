@@ -13,6 +13,7 @@ import type {
   MembershipProgression,
   MembershipProgressionSummary,
   OutstandingContributionMonth,
+  ProgressionEpochMonth,
   SerializedMembershipProgression,
 } from "@/types/membership-progression";
 
@@ -40,6 +41,16 @@ function normalizeOutstandingMonths(
     .filter((item): item is OutstandingContributionMonth => item != null);
 }
 
+function normalizeEpochMonth(value: unknown): ProgressionEpochMonth | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  const month = Number(row.month);
+  const year = Number(row.year);
+  if (!Number.isFinite(month) || !Number.isFinite(year)) return null;
+  if (month < 1 || month > 12) return null;
+  return { month, year };
+}
+
 function serializeRecord(
   record: MembershipProgression,
 ): SerializedMembershipProgression {
@@ -58,6 +69,15 @@ function serializeRecord(
         ? data.outstandingContributionMonths
         : normalizeOutstandingMonths(data.outstandingMonths).length,
     outstandingMonths: normalizeOutstandingMonths(data.outstandingMonths),
+    progressionEpochMonth:
+      normalizeEpochMonth(data.progressionEpochMonth) ??
+      data.progressionEpochMonth ??
+      null,
+    resetCount:
+      typeof data.resetCount === "number" && Number.isFinite(data.resetCount)
+        ? data.resetCount
+        : 0,
+    lastProgressionResetAt: data.lastProgressionResetAt ?? null,
   };
 }
 
@@ -79,6 +99,9 @@ export function toProgressionSummary(
     maturityDate: record.maturityDate,
     lastSuccessfulContributionDate: record.lastSuccessfulContributionDate,
     lastCalculatedAt: record.lastCalculatedAt,
+    progressionEpochMonth: record.progressionEpochMonth ?? null,
+    resetCount: record.resetCount ?? 0,
+    lastProgressionResetAt: record.lastProgressionResetAt ?? null,
   };
 }
 
@@ -110,7 +133,7 @@ export async function listAllMembershipProgressions(): Promise<
   );
 }
 
-function parseIsoToTimestamp(iso: string | null): Timestamp | null {
+function parseIsoToTimestamp(iso: string | null | undefined): Timestamp | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
@@ -126,8 +149,25 @@ async function writeProgressionChangeAudits(
   const entityId = result.memberId;
   const actor = PROGRESSION_AUDIT_SYSTEM_ACTOR;
 
+  if (result.didReset) {
+    await createAuditLog({
+      action: ProgressionAuditAction.PROGRESSION_RESET,
+      entityType,
+      entityId,
+      ...actor,
+      metadata: {
+        memberId: result.memberId,
+        resetCount: result.resetCount,
+        progressionEpochMonth: result.progressionEpochMonth,
+        consecutiveMissedMonths: result.consecutiveMissedMonths,
+        welfarePointsAfter: result.welfarePoints,
+      },
+    });
+  }
+
   const hasMeaningfulChange =
     isNew ||
+    result.didReset ||
     !previous ||
     previous.welfarePoints !== result.welfarePoints ||
     previous.benefitPercentage !== result.benefitPercentage ||
@@ -137,7 +177,8 @@ async function writeProgressionChangeAudits(
     previous.outstandingContributionMonths !==
       result.outstandingContributionMonths ||
     previous.successfulContributionMonths !==
-      result.successfulContributionMonths;
+      result.successfulContributionMonths ||
+    (previous.resetCount ?? 0) !== result.resetCount;
 
   if (!hasMeaningfulChange) {
     return;
@@ -151,8 +192,10 @@ async function writeProgressionChangeAudits(
     metadata: {
       memberId: result.memberId,
       outstandingContributionMonths: result.outstandingContributionMonths,
+      consecutiveMissedMonths: result.consecutiveMissedMonths,
       welfarePoints: result.welfarePoints,
       membershipStatus: result.membershipStatus,
+      didReset: result.didReset,
     },
   });
 
@@ -255,6 +298,9 @@ export async function upsertMembershipProgression(
     lastSuccessfulContributionDate: parseIsoToTimestamp(
       result.lastSuccessfulContributionDate,
     ),
+    progressionEpochMonth: result.progressionEpochMonth,
+    lastProgressionResetAt: parseIsoToTimestamp(result.lastProgressionResetAt),
+    resetCount: result.resetCount,
     lastCalculatedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     ...(isNew ? { createdAt: FieldValue.serverTimestamp() } : {}),
@@ -287,13 +333,13 @@ export async function upsertMembershipProgression(
 export async function syncMemberDefaulterFields(
   memberId: string,
   input: {
-    outstandingContributionMonths: number;
+    consecutiveMissedMonths: number;
     isDefaulter: boolean;
   },
 ): Promise<void> {
   const db = getAdminDb();
   const payload = sanitizeFirestoreData({
-    consecutiveUnpaidMonths: input.outstandingContributionMonths,
+    consecutiveUnpaidMonths: input.consecutiveMissedMonths,
     isDefaulter: input.isDefaulter,
     updatedAt: FieldValue.serverTimestamp(),
   });

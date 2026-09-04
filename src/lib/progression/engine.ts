@@ -6,7 +6,7 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { MembershipProgressionStatus } from "@/types/enums";
 import {
   calculateProgressionFromContributions,
-  DEFAULT_LAPSED_THRESHOLD_MONTHS,
+  POST_MATURITY_RESET_STREAK_MONTHS,
   type ProgressionContributionInput,
 } from "@/lib/progression/calculator";
 import {
@@ -67,10 +67,7 @@ async function runMembershipProgressionCalculation(
   ]);
 
   const asOf = getCurrentMonthYear();
-  const membershipStart =
-    toMonthKeyFromIsoDate(member.activatedAt) ??
-    toMonthKeyFromIsoDate(member.createdAt) ??
-    asOf;
+  const membershipStart = toMonthKeyFromIsoDate(member.createdAt) ?? asOf;
 
   const result = calculateProgressionFromContributions({
     memberId,
@@ -78,19 +75,21 @@ async function runMembershipProgressionCalculation(
     membershipStart,
     asOf,
     defaulterThresholdMonths: settings.defaulterThresholdMonths,
-    lapsedThresholdMonths: DEFAULT_LAPSED_THRESHOLD_MONTHS,
+    postMaturityResetMonths: POST_MATURITY_RESET_STREAK_MONTHS,
     existingMaturityDate: existing?.maturityDate ?? null,
+    existingProgressionEpoch: existing?.progressionEpochMonth ?? null,
+    existingResetCount: existing?.resetCount ?? 0,
+    existingLastProgressionResetAt: existing?.lastProgressionResetAt ?? null,
   });
 
   const saved = await upsertMembershipProgression(result);
 
   const isDefaulter =
-    result.membershipStatus === MembershipProgressionStatus.DEFAULTING ||
-    result.membershipStatus === MembershipProgressionStatus.LAPSED;
+    result.membershipStatus === MembershipProgressionStatus.DEFAULTING;
 
   try {
     await syncMemberDefaulterFields(memberId, {
-      outstandingContributionMonths: result.outstandingContributionMonths,
+      consecutiveMissedMonths: result.consecutiveMissedMonths,
       isDefaulter,
     });
   } catch (error) {
@@ -165,4 +164,7 @@ export {
   calculateProgressionFromContributions,
   MATURITY_SUCCESSFUL_MONTHS,
   FULL_BENEFIT_WELFARE_POINTS,
+  PRE_MATURITY_RESET_STREAK_MONTHS,
+  POST_MATURITY_RESET_STREAK_MONTHS,
+  DEFAULT_LAPSED_THRESHOLD_MONTHS,
 } from "@/lib/progression/calculator";

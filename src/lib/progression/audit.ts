@@ -4,6 +4,7 @@ export const ProgressionAuditAction = {
   MEMBERSHIP_STATUS_CHANGED: "progression_membership_status_changed",
   MATURITY_REACHED: "progression_maturity_reached",
   CLAIM_ELIGIBILITY_GAINED: "progression_claim_eligibility_gained",
+  PROGRESSION_RESET: "progression_reset",
 } as const;
 
 export type ProgressionAuditAction =

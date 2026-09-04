@@ -24,6 +24,7 @@ export const COLLECTIONS = {
 
 export const SYSTEM_DOCS = {
   SETTINGS: "settings",
+  PROGRESSION_MONTH_BOUNDARY: "progression_month_boundary",
 } as const;
 
 export const STORAGE_PATHS = {

@@ -32,17 +32,17 @@ export interface MemberOutstandingContributions {
 }
 
 /**
- * Official contribution start month = calendar month of join
- * (activatedAt preferred, else createdAt) in Africa/Accra.
+ * Official contribution start month = calendar month the member was added
+ * to the Welfare Scheme (`createdAt`) in Africa/Accra.
+ *
+ * Portal activation (`activatedAt`) is a separate concept and must not
+ * redefine the contribution start month.
  */
 export function resolveContributionStartMonth(member: {
   activatedAt?: string | null;
   createdAt?: string | null;
 }): MonthYear | null {
-  return (
-    toMonthKeyFromIsoDate(member.activatedAt) ??
-    toMonthKeyFromIsoDate(member.createdAt)
-  );
+  return toMonthKeyFromIsoDate(member.createdAt);
 }
 
 export async function getMemberOutstandingContributions(

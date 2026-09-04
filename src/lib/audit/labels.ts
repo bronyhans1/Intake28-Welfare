@@ -81,6 +81,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   [ProgressionAuditAction.MATURITY_REACHED]: "Member reached Maturity",
   [ProgressionAuditAction.CLAIM_ELIGIBILITY_GAINED]:
     "Member became Claim Eligible",
+  [ProgressionAuditAction.PROGRESSION_RESET]: "Welfare progression reset",
 };
 
 export const AUDIT_ACTION_OPTIONS = Object.entries(AUDIT_ACTION_LABELS).map(
@@ -358,6 +359,10 @@ export function formatAuditDescription(
 
   if (action === ProgressionAuditAction.CLAIM_ELIGIBILITY_GAINED) {
     return "Member became Claim Eligible.";
+  }
+
+  if (action === ProgressionAuditAction.PROGRESSION_RESET) {
+    return "Welfare progression was reset due to consecutive missed contributions.";
   }
 
   const actorName =

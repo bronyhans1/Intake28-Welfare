@@ -31,6 +31,35 @@ function monthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, "0")}`;
 }
 
+/**
+ * Scheme admission date for Dashboard "Member Since" and
+ * Welfare Journey "Joined Welfare Scheme".
+ * Uses createdAt only — activatedAt is portal activation, not join.
+ */
+export function resolveWelfareJourneyMemberSince(
+  member: Pick<SerializedMember, "createdAt" | "activatedAt">,
+): string | null {
+  return member.createdAt ?? null;
+}
+
+/**
+ * First Contribution milestone date = earliest createdAt among paid
+ * monthly_dues contribution records (record date, not contribution month).
+ */
+export function resolveFirstPaidMonthlyDuesContributionDate(
+  paidByMonth: Map<string, string | null>,
+): string | null {
+  const paidMonthKeysSorted = [...paidByMonth.keys()].sort();
+  let firstContributionDate: string | null = null;
+  for (const key of paidMonthKeysSorted) {
+    const at = paidByMonth.get(key) ?? null;
+    if (at && (!firstContributionDate || at < firstContributionDate)) {
+      firstContributionDate = at;
+    }
+  }
+  return firstContributionDate;
+}
+
 async function loadPaidMonthlyDuesMonthKeys(memberId: string): Promise<{
   paidMonthKeysSorted: string[];
   firstContributionDate: string | null;
@@ -68,15 +97,11 @@ async function loadPaidMonthlyDuesMonthKeys(memberId: string): Promise<{
   }
 
   const paidMonthKeysSorted = [...paidByMonth.keys()].sort();
-  let firstContributionDate: string | null = null;
-  for (const key of paidMonthKeysSorted) {
-    const at = paidByMonth.get(key) ?? null;
-    if (at && (!firstContributionDate || at < firstContributionDate)) {
-      firstContributionDate = at;
-    }
-  }
 
-  return { paidMonthKeysSorted, firstContributionDate };
+  return {
+    paidMonthKeysSorted,
+    firstContributionDate: resolveFirstPaidMonthlyDuesContributionDate(paidByMonth),
+  };
 }
 
 /**
@@ -136,7 +161,7 @@ export async function getWelfareJourneyDashboard(
         null,
     }));
 
-  const memberSince = member.activatedAt ?? member.createdAt ?? null;
+  const memberSince = resolveWelfareJourneyMemberSince(member);
   const timeline = buildJourneyTimeline({
     progression,
     memberSince,
@@ -152,6 +177,7 @@ export async function getWelfareJourneyDashboard(
     memberId: member.id,
     firstName: getFirstName(member.fullName),
     memberSince,
+    portalActivatedAt: member.activatedAt ?? null,
     progression,
     insight: buildJourneyInsight(progression),
     badge: resolveJourneyBadge(progression.welfarePoints),

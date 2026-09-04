@@ -1,18 +1,11 @@
-/**
- * Public Progression API.
- *
- * Recalculation entry point (use after contributions / membership changes):
- *   recalculateMembershipProgression(memberId)
- *
- * Constants are exported from the calculator directly so reading benefit/maturity
- * constants does not create a circular load through hooks ↔ engine.
- */
-
 export {
   calculateBenefitPercentage,
   calculateProgressionFromContributions,
   MATURITY_SUCCESSFUL_MONTHS,
   FULL_BENEFIT_WELFARE_POINTS,
+  PRE_MATURITY_RESET_STREAK_MONTHS,
+  POST_MATURITY_RESET_STREAK_MONTHS,
+  DEFAULT_LAPSED_THRESHOLD_MONTHS,
 } from "@/lib/progression/calculator";
 
 export {
@@ -27,3 +20,5 @@ export {
   getProgressionByMemberId,
   toProgressionSummary,
 } from "@/lib/progression/repository";
+
+export { runProgressionMonthBoundary } from "@/lib/progression/month-boundary";

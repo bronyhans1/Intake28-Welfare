@@ -1,12 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { ContributionStatus, ContributionType } from "@/types/enums";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  ContributionStatus,
+  ContributionType,
+  MembershipProgressionStatus,
+} from "@/types/enums";
 import {
   assertMonthsWithinContributionWindow,
   resolveContributionStartMonth,
 } from "@/lib/contributions/outstanding-months";
 import { getContributionMonths } from "@/lib/contributions/repository";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
-import { MembershipProgressionStatus } from "@/types/enums";
+import { calculateProgressionFromContributions } from "@/lib/progression/calculator";
+import { monthYearKey, type MonthYear } from "@/lib/finance/period";
 
 vi.mock("@/lib/finance/period", async () => {
   const actual = await vi.importActual<typeof import("@/lib/finance/period")>(
@@ -18,23 +25,150 @@ vi.mock("@/lib/finance/period", async () => {
   };
 });
 
+function computeOutstandingMonths(
+  membershipStart: MonthYear,
+  asOf: MonthYear,
+  paid: MonthYear[],
+): MonthYear[] {
+  const paidKeys = new Set(paid.map((period) => monthYearKey(period)));
+  return getContributionMonths(membershipStart, asOf).filter(
+    (period) => !paidKeys.has(monthYearKey(period)),
+  );
+}
+
 describe("resolveContributionStartMonth", () => {
-  it("uses the join month even when joining mid-month", () => {
+  it("uses createdAt even when joining mid-month", () => {
     expect(
       resolveContributionStartMonth({
-        activatedAt: "2026-07-20T15:30:00.000Z",
-        createdAt: "2026-01-01T00:00:00.000Z",
+        activatedAt: "2026-09-03T10:00:00.000Z",
+        createdAt: "2026-08-07T12:00:00.000Z",
       }),
-    ).toEqual({ month: 7, year: 2026 });
+    ).toEqual({ month: 8, year: 2026 });
   });
 
-  it("falls back to createdAt when activation is missing", () => {
+  it("uses createdAt when activation is missing", () => {
     expect(
       resolveContributionStartMonth({
         activatedAt: null,
-        createdAt: "2026-11-01T08:00:00.000Z",
+        createdAt: "2026-08-07T12:00:00.000Z",
       }),
-    ).toEqual({ month: 11, year: 2026 });
+    ).toEqual({ month: 8, year: 2026 });
+  });
+
+  it("does not use a later activatedAt as the membership start", () => {
+    expect(
+      resolveContributionStartMonth({
+        activatedAt: "2026-09-03T15:00:00.000Z",
+        createdAt: "2026-08-07T08:00:00.000Z",
+      }),
+    ).toEqual({ month: 8, year: 2026 });
+  });
+});
+
+describe("added in August, activated in September", () => {
+  const member = {
+    createdAt: "2026-08-07T12:00:00.000Z",
+    activatedAt: "2026-09-03T10:00:00.000Z",
+  };
+  const asOf = { month: 9, year: 2026 };
+
+  it("TEST 1: unpaid August is arrears and September is current", () => {
+    const start = resolveContributionStartMonth(member);
+    expect(start).toEqual({ month: 8, year: 2026 });
+
+    const outstanding = computeOutstandingMonths(start!, asOf, [
+      { month: 7, year: 2026 },
+    ]);
+
+    expect(outstanding).toEqual([
+      { month: 8, year: 2026 },
+      { month: 9, year: 2026 },
+    ]);
+    expect(outstanding.some((item) => item.month === 7 && item.year === 2026)).toBe(
+      false,
+    );
+  });
+
+  it("TEST 2: paid August is not outstanding; unpaid September remains current", () => {
+    const start = resolveContributionStartMonth(member);
+    const outstanding = computeOutstandingMonths(start!, asOf, [
+      { month: 7, year: 2026 },
+      { month: 8, year: 2026 },
+    ]);
+
+    expect(outstanding).toEqual([{ month: 9, year: 2026 }]);
+  });
+
+  it("TEST 3: same-month createdAt and activatedAt does not add extra months", () => {
+    const start = resolveContributionStartMonth({
+      createdAt: "2026-08-07T12:00:00.000Z",
+      activatedAt: "2026-08-20T10:00:00.000Z",
+    });
+    expect(start).toEqual({ month: 8, year: 2026 });
+
+    const outstanding = computeOutstandingMonths(start!, { month: 8, year: 2026 }, []);
+    expect(outstanding).toEqual([{ month: 8, year: 2026 }]);
+  });
+
+  it("TEST 4: never-activated members still start from createdAt", () => {
+    expect(
+      resolveContributionStartMonth({
+        createdAt: "2026-08-07T12:00:00.000Z",
+        activatedAt: null,
+      }),
+    ).toEqual({ month: 8, year: 2026 });
+  });
+
+  it("TEST 5: August is within the payment contribution window after later activation", () => {
+    const membershipStart = resolveContributionStartMonth(member);
+    expect(() =>
+      assertMonthsWithinContributionWindow({
+        selectedMonths: [{ month: 8, year: 2026 }],
+        membershipStart: membershipStart!,
+        currentMonth: asOf,
+      }),
+    ).not.toThrow();
+  });
+
+  it("TEST 6: unpaid August is outstanding (grace) and does not force DEFAULTING while Sep is open", () => {
+    const membershipStart = resolveContributionStartMonth(member)!;
+    const result = calculateProgressionFromContributions({
+      memberId: "member-aug",
+      membershipStart,
+      asOf,
+      defaulterThresholdMonths: 2,
+      contributions: [
+        {
+          month: 7,
+          year: 2026,
+          contributionType: ContributionType.MONTHLY_DUES,
+          status: ContributionStatus.PAID,
+        },
+      ],
+    });
+
+    expect(result.outstandingMonths).toEqual([
+      { year: 2026, month: 8 },
+      { year: 2026, month: 9 },
+    ]);
+    expect(result.outstandingContributionMonths).toBe(2);
+    expect(result.consecutiveMissedMonths).toBe(0);
+    expect(result.membershipStatus).toBe(MembershipProgressionStatus.ACTIVE);
+    expect(result.didReset).toBe(false);
+    expect(result.welfarePoints).toBe(1);
+  });
+
+  it("TEST 7: activateUserRecord does not write createdAt", () => {
+    const source = readFileSync(
+      join(process.cwd(), "src/lib/activation/repository.ts"),
+      "utf8",
+    );
+    const fnStart = source.indexOf("export async function activateUserRecord");
+    const fnEnd = source.indexOf("export async function", fnStart + 1);
+    const fnBody = source.slice(fnStart, fnEnd === -1 ? undefined : fnEnd);
+
+    expect(fnBody).toContain("activatedAt: FieldValue.serverTimestamp()");
+    expect(fnBody).not.toMatch(/createdAt\s*:/);
   });
 });
 

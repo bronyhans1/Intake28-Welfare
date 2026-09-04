@@ -134,10 +134,10 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
 
   // -------------------------------------------------------------------------
   describe("GROUP 1 — JOIN MONTH BOUNDARY", () => {
-    it("Scenario A: join 20 July 2026 → obligations start July, not earlier", () => {
+    it("Scenario A: added 20 July 2026 → obligations start July, not earlier", () => {
       const start = resolveContributionStartMonth({
-        activatedAt: "2026-07-20T15:30:00.000Z",
-        createdAt: "2026-01-01T00:00:00.000Z",
+        activatedAt: "2026-09-03T15:30:00.000Z",
+        createdAt: "2026-07-20T15:30:00.000Z",
       });
       expect(start).toEqual({ month: 7, year: 2026 });
 
@@ -148,10 +148,10 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
       ).toBe(false);
     });
 
-    it("Scenario B: join 1 November 2026 → no earlier months", () => {
+    it("Scenario B: added 1 November 2026 → no earlier months", () => {
       const start = resolveContributionStartMonth({
-        activatedAt: "2026-11-01T08:00:00.000Z",
-        createdAt: "2026-10-01T00:00:00.000Z",
+        activatedAt: "2026-12-01T08:00:00.000Z",
+        createdAt: "2026-11-01T08:00:00.000Z",
       });
       expect(start).toEqual({ month: 11, year: 2026 });
 
@@ -160,9 +160,9 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
       expect(months.some((m) => m.month === 10 && m.year === 2026)).toBe(false);
     });
 
-    it("Scenario C: join 31 July 2026 → July still Month 1", () => {
+    it("Scenario C: added 31 July 2026 → July still Month 1", () => {
       const start = resolveContributionStartMonth({
-        activatedAt: "2026-07-31T23:00:00.000Z",
+        activatedAt: "2026-08-01T23:00:00.000Z",
         createdAt: "2026-07-31T23:00:00.000Z",
       });
       expect(start).toEqual({ month: 7, year: 2026 });
@@ -384,8 +384,8 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
   });
 
   // -------------------------------------------------------------------------
-  describe("GROUP 6 — DEFAULTING", () => {
-    it("marks DEFAULTING when two consecutive months are unpaid even if a later month is paid", () => {
+  describe("GROUP 6 — DEFAULTING / RESET", () => {
+    it("resets pre-maturity progression after two consecutive completed unpaid months", () => {
       const result = calculateProgressionFromContributions({
         memberId: "m1",
         membershipStart: { month: 1, year: 2026 },
@@ -399,6 +399,10 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
         { month: 3, year: 2026 },
         { month: 4, year: 2026 },
       ]);
+      expect(result.consecutiveMissedMonths).toBe(2);
+      expect(result.didReset).toBe(true);
+      // May (asOf) was paid and falls in the new epoch after reset.
+      expect(result.welfarePoints).toBe(1);
       expect(result.membershipStatus).toBe(
         MembershipProgressionStatus.DEFAULTING,
       );
@@ -407,20 +411,7 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
 
   // -------------------------------------------------------------------------
   describe("GROUP 7 — DEFAULTING RECOVERY", () => {
-    it("clearing March+April arrears restores ACTIVE and updates points/benefit%", () => {
-      const before = calculateProgressionFromContributions({
-        memberId: "m1",
-        membershipStart: { month: 1, year: 2026 },
-        asOf: { month: 5, year: 2026 },
-        defaulterThresholdMonths: 2,
-        contributions: [dues(1), dues(2), dues(5)],
-      });
-
-      expect(before.membershipStatus).toBe(
-        MembershipProgressionStatus.DEFAULTING,
-      );
-      expect(before.outstandingContributionMonths).toBe(2);
-
+    it("clearing March+April arrears restores ACTIVE and rebuilds points", () => {
       const after = estimateProgressionAfterPayingMonths(
         {
           memberId: "m1",
@@ -438,11 +429,8 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
       expect(after.after.membershipStatus).toBe(
         MembershipProgressionStatus.ACTIVE,
       );
-      expect(after.after.welfarePoints).toBe(before.welfarePoints + 2);
-      expect(after.after.benefitPercentage).toBeGreaterThanOrEqual(
-        before.benefitPercentage,
-      );
       expect(after.after.welfarePoints).toBe(5);
+      expect(after.after.didReset).toBe(false);
 
       const cleared = calculateProgressionFromContributions({
         memberId: "m1",
@@ -452,6 +440,8 @@ describe("PHASE 3F BUSINESS RULE VERIFICATION", () => {
         contributions: [dues(1), dues(2), dues(3), dues(4), dues(5)],
       });
       expect(cleared.outstandingContributionMonths).toBe(0);
+      expect(cleared.didReset).toBe(false);
+      expect(cleared.welfarePoints).toBe(5);
     });
 
     it("trailing DEFAULTING recovers to ACTIVE after paying missed months", () => {

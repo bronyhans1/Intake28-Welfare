@@ -18,11 +18,11 @@ export function estimateProgressionAfterPayingMonths(
 ): {
   before: Pick<
     ProgressionCalculationResult,
-    "welfarePoints" | "benefitPercentage" | "membershipStatus"
+    "welfarePoints" | "benefitPercentage" | "membershipStatus" | "didReset"
   >;
   after: Pick<
     ProgressionCalculationResult,
-    "welfarePoints" | "benefitPercentage" | "membershipStatus"
+    "welfarePoints" | "benefitPercentage" | "membershipStatus" | "didReset"
   >;
 } {
   const before = calculateProgressionFromContributions(input);
@@ -47,11 +47,13 @@ export function estimateProgressionAfterPayingMonths(
       welfarePoints: before.welfarePoints,
       benefitPercentage: before.benefitPercentage,
       membershipStatus: before.membershipStatus,
+      didReset: before.didReset,
     },
     after: {
       welfarePoints: after.welfarePoints,
       benefitPercentage: after.benefitPercentage,
       membershipStatus: after.membershipStatus,
+      didReset: after.didReset,
     },
   };
 }

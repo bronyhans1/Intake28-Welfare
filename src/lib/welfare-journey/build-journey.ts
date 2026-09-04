@@ -76,11 +76,11 @@ export function buildJourneyInsight(
   if (progression.membershipStatus === MembershipProgressionStatus.LAPSED) {
     return {
       category: "lapsed",
-      title: "Membership has lapsed",
+      title: "Membership needs regularisation",
       messages: [
-        "Your membership is currently Lapsed due to prolonged missed contributions.",
-        "Reinstatement is required before you can submit welfare claims.",
-        "Please contact the welfare office to regularize your membership.",
+        "Your membership status needs attention after prolonged missed contributions.",
+        "Pay outstanding dues to rebuild your welfare progression and claim eligibility.",
+        "Contact the welfare office if you need guidance.",
       ],
       tone: "danger",
     };
@@ -93,8 +93,8 @@ export function buildJourneyInsight(
       category: "defaulting",
       title: "Contributions need attention",
       messages: [
-        "Your membership is currently Defaulting.",
-        "Please regularize your monthly contributions to protect your eligibility and keep your welfare journey on track.",
+        "You have completed unpaid contribution months on your record.",
+        "Pay missed months promptly to protect your welfare progression and avoid a progression reset.",
       ],
       tone: "warning",
     };
@@ -222,9 +222,9 @@ export function buildStatusInfo(
   if (status === MembershipProgressionStatus.LAPSED) {
     return {
       status,
-      title: "Lapsed membership",
+      title: "Membership needs regularisation",
       description:
-        "Your membership has lapsed after prolonged missed contributions. Reinstatement is required before you can submit welfare claims. Contact the welfare office for guidance.",
+        "Prolonged missed contributions have affected your membership standing. Pay outstanding dues to rebuild progression and restore claim eligibility. Contact the welfare office if you need guidance.",
       tone: "danger",
     };
   }
@@ -233,7 +233,7 @@ export function buildStatusInfo(
       status,
       title: "Defaulting membership",
       description:
-        "Defaulting means recent monthly contributions have been missed. Regularize your payments soon to protect claim eligibility and keep your benefit progression healthy.",
+        "One or more completed contribution months are unpaid. Regularize payments soon to protect your welfare progression and avoid a progression reset.",
       tone: "warning",
     };
   }

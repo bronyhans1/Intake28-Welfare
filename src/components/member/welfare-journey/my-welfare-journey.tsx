@@ -338,6 +338,16 @@ export function MyWelfareJourney({ journey }: MyWelfareJourneyProps) {
                     : "—"}
                 </dd>
               </div>
+              <div>
+                <dt className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+                  Portal Activated
+                </dt>
+                <dd className="mt-1 text-sm font-medium">
+                  {journey.portalActivatedAt
+                    ? formatDisplayDate(journey.portalActivatedAt)
+                    : "Not activated"}
+                </dd>
+              </div>
             </dl>
           </CardContent>
         </Card>

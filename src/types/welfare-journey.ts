@@ -85,6 +85,8 @@ export interface WelfareJourneyDashboard {
   memberId: string;
   firstName: string;
   memberSince: string | null;
+  /** Portal account activation (`users.activatedAt`); null if not yet activated. */
+  portalActivatedAt: string | null;
   progression: MembershipProgressionSummary;
   insight: WelfareJourneyInsight;
   badge: WelfareJourneyBadge;

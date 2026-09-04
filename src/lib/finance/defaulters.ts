@@ -128,9 +128,14 @@ export async function getDefaulters(
   for (const row of progressions) {
     if (!activeMemberIds.has(row.memberId)) continue;
 
+    // Defaulters = members in a consecutive completed-miss streak (DEFAULTING).
+    // Outstanding payable months alone (e.g. joining-month grace) are not enough.
+    if (row.membershipStatus !== MembershipProgressionStatus.DEFAULTING) {
+      continue;
+    }
+
     const months = row.outstandingMonths ?? [];
     const count = row.outstandingContributionMonths ?? months.length;
-    if (count <= 0) continue;
     if (periodFilter && !includesPeriod(months, periodFilter)) continue;
 
     const labels = months.map((period) => formatMonthYearLabel(period));
