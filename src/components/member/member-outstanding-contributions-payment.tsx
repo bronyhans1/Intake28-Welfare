@@ -297,6 +297,17 @@ export function MemberOutstandingContributionsPayment({
                   <h3 className="text-sm font-semibold text-foreground">
                     Previous Unpaid Months
                   </h3>
+                  {hasArrears ? (
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {arrears.length === 1
+                        ? "1 outstanding month"
+                        : `${arrears.length} outstanding months`}
+                      {" · "}
+                      {formatCurrency(
+                        arrears.reduce((sum, item) => sum + item.amount, 0),
+                      )}
+                    </p>
+                  ) : null}
                   <p className="mt-1 text-sm text-muted-foreground">
                     {current
                       ? "You also have previous unpaid months."
