@@ -10,10 +10,12 @@ export {
 export {
   canManageContributions,
   canViewContributions,
+  computeMemberContributionStats,
   createContribution,
   getContributionById,
   getContributionMonths,
   getContributionStats,
+  listAllMemberContributions,
   listContributions,
   updateContribution,
   type ContributionListResult,

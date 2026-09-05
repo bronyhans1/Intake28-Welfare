@@ -10,8 +10,8 @@ import { getCurrentUserFromSession } from "@/lib/auth/session";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 import {
-  getContributionStats,
-  listContributions,
+  computeMemberContributionStats,
+  listAllMemberContributions,
 } from "@/lib/contributions/repository";
 import { getMemberOutstandingContributions } from "@/lib/contributions/outstanding-months";
 import { getCurrentMonthYear } from "@/lib/finance/period";
@@ -25,6 +25,8 @@ export const metadata = createPageMetadata(
   "My Contributions",
   "View your welfare scheme contribution history",
 );
+
+const HISTORY_PAGE_SIZE = 100;
 
 export default async function MemberContributionsPage() {
   const actor = await getCurrentUserFromSession();
@@ -47,19 +49,21 @@ export default async function MemberContributionsPage() {
     );
   }
 
-  const [stats, data, outstanding, progression, settings] = await Promise.all([
-    getContributionStats({ memberId: actor.uid }),
-    listContributions({
-      memberId: actor.uid,
-      page: 1,
-      pageSize: 100,
-    }),
-    getMemberOutstandingContributions(actor.uid),
+  // One member-scoped contributions read drives history, stats, and outstanding.
+  const [allRecords, progression, settings] = await Promise.all([
+    listAllMemberContributions(actor.uid),
     getProgressionByMemberId(actor.uid),
     getSystemSettings(),
   ]);
 
-  const lastContributionDate = data.records[0]?.createdAt ?? null;
+  const outstanding = await getMemberOutstandingContributions(actor.uid, {
+    contributionRecords: allRecords,
+    monthlyDuesAmount: settings.monthlyDuesAmount,
+  });
+
+  const stats = computeMemberContributionStats(allRecords);
+  const records = allRecords.slice(0, HISTORY_PAGE_SIZE);
+  const lastContributionDate = records[0]?.createdAt ?? null;
   const asOf = getCurrentMonthYear();
 
   return (
@@ -76,7 +80,7 @@ export default async function MemberContributionsPage() {
           progression={{
             membershipStart: outstanding.membershipStart,
             asOf,
-            contributions: data.records.map((record) => ({
+            contributions: allRecords.map((record) => ({
               year: record.year,
               month: record.month,
               contributionType: record.contributionType,
@@ -93,7 +97,7 @@ export default async function MemberContributionsPage() {
         />
       ) : null}
       <MemberContributionsSummary stats={stats} lastContributionDate={lastContributionDate} />
-      <MemberContributionsTable records={data.records} />
+      <MemberContributionsTable records={records} />
     </MemberPageShell>
   );
 }

@@ -38,9 +38,11 @@ vi.mock("@/lib/firebase/admin", () => ({
 import {
   canManageContributions,
   canViewContributions,
+  computeMemberContributionStats,
   createContribution,
   getContributionMonths,
   getContributionStats,
+  listAllMemberContributions,
   listContributions,
   updateContribution,
 } from "@/lib/contributions/repository";
@@ -266,6 +268,39 @@ describe("contributions repository", () => {
     expect(mockWhere).toHaveBeenCalledWith("memberId", "==", "m1");
     expect(result.total).toBe(1);
     expect(result.records[0]?.memberId).toBe("m1");
+  });
+
+  it("listAllMemberContributions uses one member-scoped query", async () => {
+    const mockWhere = vi.fn().mockReturnValue({
+      get: vi.fn().mockResolvedValue({
+        docs: [
+          { id: "c1", data: () => ({ ...baseRecord, id: undefined }) },
+          {
+            id: "c2",
+            data: () => ({
+              ...baseRecord,
+              id: undefined,
+              amount: 100,
+              status: ContributionStatus.PAID,
+            }),
+          },
+        ],
+      }),
+    });
+    mockCollection.mockReturnValue({
+      doc: mockDoc,
+      orderBy: mockOrderBy,
+      where: mockWhere,
+    });
+
+    const records = await listAllMemberContributions("m1");
+    const stats = computeMemberContributionStats(records);
+
+    expect(mockWhere).toHaveBeenCalledWith("memberId", "==", "m1");
+    expect(records).toHaveLength(2);
+    expect(stats.totalContributions).toBe(2);
+    expect(stats.totalAmountCollected).toBe(150);
+    expect(stats.membersContributed).toBe(1);
   });
 });
 

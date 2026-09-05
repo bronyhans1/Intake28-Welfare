@@ -1,19 +1,21 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import {
-  ContributionStatus,
-  ContributionType,
-  MembershipProgressionStatus,
-} from "@/types/enums";
 import {
   assertMonthsWithinContributionWindow,
+  buildPaidMonthlyDuesKeys,
+  computeOutstandingContributionMonths,
   resolveContributionStartMonth,
 } from "@/lib/contributions/outstanding-months";
 import { getContributionMonths } from "@/lib/contributions/repository";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { calculateProgressionFromContributions } from "@/lib/progression/calculator";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
+import {
+  ContributionStatus,
+  ContributionType,
+  MembershipProgressionStatus,
+} from "@/types/enums";
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 vi.mock("@/lib/finance/period", async () => {
   const actual = await vi.importActual<typeof import("@/lib/finance/period")>(
@@ -119,6 +121,40 @@ describe("added in August, activated in September", () => {
     ).toEqual({ month: 8, year: 2026 });
   });
 
+  it("computes arrears and current from one paid-dues lookup", () => {
+    const membershipStart = resolveContributionStartMonth(member)!;
+    const paidKeys = buildPaidMonthlyDuesKeys([
+      {
+        contributionType: ContributionType.MONTHLY_DUES,
+        status: ContributionStatus.PAID,
+        month: 8,
+        year: 2026,
+      },
+      {
+        contributionType: ContributionType.SPECIAL_CONTRIBUTION,
+        status: ContributionStatus.PAID,
+        month: 9,
+        year: 2026,
+      },
+    ]);
+
+    const result = computeOutstandingContributionMonths({
+      membershipStart,
+      currentMonth: asOf,
+      paidMonthlyDuesKeys: paidKeys,
+      monthlyDuesAmount: 50,
+    });
+
+    expect(result.arrears).toEqual([]);
+    expect(result.current).toMatchObject({
+      month: 9,
+      year: 2026,
+      amount: 50,
+      isCurrent: true,
+    });
+    expect(result.outstanding).toHaveLength(1);
+  });
+
   it("TEST 5: August is within the payment contribution window after later activation", () => {
     const membershipStart = resolveContributionStartMonth(member);
     expect(() =>
@@ -169,6 +205,34 @@ describe("added in August, activated in September", () => {
 
     expect(fnBody).toContain("activatedAt: FieldValue.serverTimestamp()");
     expect(fnBody).not.toMatch(/createdAt\s*:/);
+  });
+});
+
+describe("buildPaidMonthlyDuesKeys", () => {
+  it("only indexes paid monthly dues months", () => {
+    const keys = buildPaidMonthlyDuesKeys([
+      {
+        contributionType: ContributionType.MONTHLY_DUES,
+        status: ContributionStatus.PAID,
+        month: 8,
+        year: 2026,
+      },
+      {
+        contributionType: ContributionType.MONTHLY_DUES,
+        status: "pending",
+        month: 9,
+        year: 2026,
+      },
+      {
+        contributionType: ContributionType.SPECIAL_CONTRIBUTION,
+        status: ContributionStatus.PAID,
+        month: 9,
+        year: 2026,
+      },
+    ]);
+
+    expect(keys.has("2026-08")).toBe(true);
+    expect(keys.has("2026-09")).toBe(false);
   });
 });
 

@@ -156,6 +156,34 @@ export async function findPaidMonthlyDuesContribution(
   return record ? serializeRecord(record) : null;
 }
 
+/**
+ * All contribution records for one member (member-scoped equality query).
+ * Prefer this over repeated findPaid / stats / list reads on member pages.
+ */
+export async function listAllMemberContributions(
+  memberId: string,
+): Promise<SerializedContribution[]> {
+  const records = await fetchRecordsByMemberId(memberId);
+  return records.map(serializeRecord);
+}
+
+export function computeMemberContributionStats(
+  records: Array<{
+    status: string;
+    amount: number;
+  }>,
+): ContributionStats {
+  const paid = records.filter(
+    (record) => record.status === ContributionStatus.PAID,
+  );
+
+  return {
+    totalContributions: paid.length,
+    totalAmountCollected: paid.reduce((sum, record) => sum + record.amount, 0),
+    membersContributed: paid.length > 0 ? 1 : 0,
+  };
+}
+
 export interface AutomatedContributionInput {
   memberId: string;
   memberName: string;
