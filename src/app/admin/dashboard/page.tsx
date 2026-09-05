@@ -5,14 +5,13 @@ import { AdminPageShell } from "@/components/admin/admin-page-shell";
 import { createPageMetadata } from "@/components/shared/page-placeholder";
 import { getCurrentUserFromSession } from "@/lib/auth/session";
 import {
-  getMemberStats,
+  getAdminMemberOverview,
   getRecentActivity,
-  getRecentMembers,
 } from "@/lib/dashboard/admin-dashboard.service";
 import { getExecutiveProgressionInsights } from "@/lib/dashboard/executive-progression-insights";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 import { canManageMembers, canViewMembers } from "@/lib/members/repository";
-import { getPublishedAnnouncementCount, getRecentPublishedAnnouncements } from "@/lib/announcements/repository";
+import { getPublishedAnnouncementsOverview } from "@/lib/announcements/repository";
 import { getRecentUnreadNotifications } from "@/lib/notifications/repository";
 import { getMemberMembershipStatus } from "@/lib/membership/status-summary";
 import { resolveOwnMemberId } from "@/lib/members/member-context";
@@ -56,20 +55,37 @@ export default async function AdminDashboardPage() {
 
   const ownMemberId = await resolveOwnMemberId(actor);
 
-  const [stats, welfareStats, publishedAnnouncementCount, recentAnnouncements, recentNotifications, recentMembers, recentActivity, membershipStatus, progressionInsights] =
-    await Promise.all([
-      getMemberStats(),
-      getUnifiedWelfarePaidStats(),
-      getPublishedAnnouncementCount(),
-      getRecentPublishedAnnouncements(5),
-      getRecentUnreadNotifications(actor, 5),
-      getRecentMembers(10),
-      getRecentActivity(10, { sessionUserFullName: actor.fullName }),
-      ownMemberId
-        ? getMemberMembershipStatus(ownMemberId, actor)
-        : Promise.resolve(null),
-      getExecutiveProgressionInsights().catch(() => null),
-    ]);
+  // Member overview (one users read) first so progression insights can reuse names.
+  const memberOverview = await getAdminMemberOverview(10);
+  const knownActorNames = new Map(
+    [...memberOverview.memberNames.entries()].map(([id, identity]) => [
+      id,
+      identity.fullName,
+    ]),
+  );
+
+  const [
+    welfareStats,
+    announcementOverview,
+    recentNotifications,
+    recentActivity,
+    membershipStatus,
+    progressionInsights,
+  ] = await Promise.all([
+    getUnifiedWelfarePaidStats(),
+    getPublishedAnnouncementsOverview(5),
+    getRecentUnreadNotifications(actor, 5),
+    getRecentActivity(10, {
+      sessionUserFullName: actor.fullName,
+      knownActorNames,
+    }),
+    ownMemberId
+      ? getMemberMembershipStatus(ownMemberId, actor)
+      : Promise.resolve(null),
+    getExecutiveProgressionInsights({
+      memberNames: memberOverview.memberNames,
+    }).catch(() => null),
+  ]);
 
   return (
     <AdminPageShell
@@ -78,12 +94,12 @@ export default async function AdminDashboardPage() {
       description="Here's the latest welfare portal activity."
     >
       <AdminDashboardOverview
-        stats={stats}
+        stats={memberOverview.stats}
         welfareStats={welfareStats}
-        publishedAnnouncementCount={publishedAnnouncementCount}
-        recentAnnouncements={recentAnnouncements}
+        publishedAnnouncementCount={announcementOverview.count}
+        recentAnnouncements={announcementOverview.recent}
         recentNotifications={recentNotifications}
-        recentMembers={recentMembers}
+        recentMembers={memberOverview.recentMembers}
         recentActivity={recentActivity}
         membershipStatus={membershipStatus}
         canManage={canManageMembers(actor.role)}

@@ -170,6 +170,26 @@ export async function getRecentPublishedAnnouncements(
     .map(serializeRecord);
 }
 
+/**
+ * Single announcements collection read for admin dashboard widgets
+ * that need both published count and a recent published list.
+ */
+export async function getPublishedAnnouncementsOverview(
+  recentLimit = 5,
+): Promise<{
+  count: number;
+  recent: SerializedAnnouncement[];
+}> {
+  const published = (await fetchAllRecords()).filter(
+    (record) => record.status === AnnouncementStatus.PUBLISHED,
+  );
+
+  return {
+    count: published.length,
+    recent: published.slice(0, recentLimit).map(serializeRecord),
+  };
+}
+
 async function buildViewerContext(user: CurrentUser): Promise<AnnouncementViewerContext> {
   const member = await getMemberById(user.uid);
   const defaulters = await getDefaulters();

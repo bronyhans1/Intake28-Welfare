@@ -88,7 +88,10 @@ beforeEach(() => {
   mockFetchFilteredWelfareSupport.mockResolvedValue([]);
   mockCollection.mockImplementation((name: string) => {
     if (name === "payments") {
-      return { get: mockPaymentsGet };
+      return {
+        get: mockPaymentsGet,
+        where: vi.fn().mockReturnValue({ get: mockPaymentsGet }),
+      };
     }
     return { get: vi.fn() };
   });

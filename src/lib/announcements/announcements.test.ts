@@ -5,6 +5,7 @@ import {
   canViewAnnouncements,
   createAnnouncement,
   getPublishedAnnouncementCount,
+  getPublishedAnnouncementsOverview,
   getVisibleAnnouncementCountForUser,
   updateAnnouncement,
 } from "@/lib/announcements/repository";
@@ -398,6 +399,25 @@ describe("announcements repository", () => {
     });
 
     await expect(getPublishedAnnouncementCount()).resolves.toBe(2);
+  });
+
+  it("returns published count and recent list from one announcements read", async () => {
+    mockGet.mockResolvedValue({
+      docs: [
+        makeAnnouncementFirestoreDoc("pub-1"),
+        makeAnnouncementFirestoreDoc("pub-2"),
+        makeAnnouncementFirestoreDoc("draft-1", {
+          status: AnnouncementStatus.DRAFT,
+          publishedAt: null,
+        }),
+      ],
+    });
+
+    const overview = await getPublishedAnnouncementsOverview(1);
+
+    expect(overview.count).toBe(2);
+    expect(overview.recent).toHaveLength(1);
+    expect(mockOrderBy).toHaveBeenCalledTimes(1);
   });
 
   it("counts only visible announcements for members", async () => {

@@ -38,9 +38,15 @@ async function fetchSuccessfulClaimDisbursements(
 ): Promise<SerializedPayment[]> {
   const db = getAdminDb();
   const collection = db.collection(COLLECTIONS.PAYMENTS);
+
+  // Equality-only filters (no composite index):
+  // - member path: memberId
+  // - scheme path: paymentType (avoids downloading all payment kinds)
   const snapshot = memberId
     ? await collection.where("memberId", "==", memberId).get()
-    : await collection.get();
+    : await collection
+        .where("paymentType", "==", PaymentType.CLAIM_PAYMENT)
+        .get();
 
   return snapshot.docs
     .map((doc) =>
@@ -254,6 +260,42 @@ export async function getUnifiedWelfarePaidStats(filters: {
   month?: number;
   year?: number;
 } = {}): Promise<WelfareSupportStats> {
+  // Admin dashboard / unfiltered totals only need amounts + member IDs.
+  // Skip support-type label loading and full history entry construction.
+  if (!filters.memberId && filters.month == null && filters.year == null) {
+    const [welfareRows, claimPayments] = await Promise.all([
+      fetchFilteredWelfareSupport({}),
+      fetchSuccessfulClaimDisbursements(),
+    ]);
+
+    const memberIds = new Set<string>();
+    let totalRecords = 0;
+    let totalAmount = 0;
+    const seenClaimIds = new Set<string>();
+
+    for (const payment of claimPayments) {
+      if (payment.claimId) {
+        if (seenClaimIds.has(payment.claimId)) continue;
+        seenClaimIds.add(payment.claimId);
+      }
+      totalRecords += 1;
+      totalAmount += payment.amount;
+      memberIds.add(payment.memberId);
+    }
+
+    for (const record of welfareRows) {
+      totalRecords += 1;
+      totalAmount += record.amount;
+      memberIds.add(record.memberId);
+    }
+
+    return {
+      totalRecords,
+      totalAmount,
+      membersAssisted: memberIds.size,
+    };
+  }
+
   const entries = await fetchUnifiedWelfareHistoryEntries({
     memberId: filters.memberId,
     supportMonth: filters.month,

@@ -383,14 +383,26 @@ async function loadMemberNameMap(): Promise<
   return map;
 }
 
+export interface GetExecutiveProgressionInsightsOptions {
+  /**
+   * When provided (e.g. admin dashboard already loaded users),
+   * skips a second full users collection download for display names.
+   */
+  memberNames?: Map<string, { fullName: string; serviceNumber: string }>;
+}
+
 /**
- * One progressions collection read + one users read for names.
- * All widgets derive from this in-memory aggregation.
+ * One progressions collection read + users names (unless provided) + dues setting.
+ * All widgets derive from this in-memory aggregation of persisted progression docs.
  */
-export async function getExecutiveProgressionInsights(): Promise<ExecutiveProgressionInsights> {
+export async function getExecutiveProgressionInsights(
+  options: GetExecutiveProgressionInsightsOptions = {},
+): Promise<ExecutiveProgressionInsights> {
   const [records, names, monthlyDuesAmount] = await Promise.all([
     listAllMembershipProgressions(),
-    loadMemberNameMap(),
+    options.memberNames
+      ? Promise.resolve(options.memberNames)
+      : loadMemberNameMap(),
     getMonthlyDuesAmount(),
   ]);
 
