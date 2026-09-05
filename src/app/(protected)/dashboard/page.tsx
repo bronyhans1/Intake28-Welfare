@@ -7,10 +7,6 @@ import { requireOwnMemberPortalAccess } from "@/lib/auth/require-member-portal";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 import { getMemberById } from "@/lib/members/repository";
 import { listVisibleAnnouncementsForUser } from "@/lib/announcements/repository";
-import {
-  getContributionStats,
-  listContributions,
-} from "@/lib/contributions/repository";
 import { getMemberMembershipStatus } from "@/lib/membership/status-summary";
 import { listMemberWelfareHistory } from "@/lib/welfare/history";
 import { listAllWelfareSupportTypeOptions } from "@/lib/welfare-support-types/repository";
@@ -47,35 +43,42 @@ export default async function DashboardPage() {
     );
   }
 
-  const [member, welfareData, visibleAnnouncements, contributionStats, contributionsData, membershipStatus, officialConstitution, supportTypes] =
+  // Load welfare history first so membership status can reuse its total
+  // instead of issuing a second unified welfare history fetch.
+  const [member, welfareData, visibleAnnouncements, officialConstitution, supportTypes] =
     await Promise.all([
       getMemberById(actor.uid),
       listMemberWelfareHistory(actor, { page: 1, pageSize: 5 }),
       listVisibleAnnouncementsForUser(actor),
-      getContributionStats({ memberId: actor.uid }),
-      listContributions({ memberId: actor.uid, page: 1, pageSize: 1 }),
-      getMemberMembershipStatus(actor.uid, actor),
       getActiveConstitution(),
       listAllWelfareSupportTypeOptions(),
     ]);
-
-  const latestAnnouncement = visibleAnnouncements[0] ?? null;
-  const visibleAnnouncementCount = visibleAnnouncements.length;
-  const lastContributionDate = contributionsData.records[0]?.createdAt ?? null;
-  const supportTypeLabelMap = Object.fromEntries(
-    supportTypes.map((type) => [type.code, type.displayName]),
-  );
 
   if (!member) {
     redirect("/login");
   }
 
-  let welfareJourney = null;
-  try {
-    welfareJourney = await getWelfareJourneyDashboard(member);
-  } catch {
-    welfareJourney = null;
-  }
+  const [membershipStatus, welfareJourney] = await Promise.all([
+    getMemberMembershipStatus(actor.uid, actor, {
+      welfareSupportCount: welfareData.total,
+    }),
+    getWelfareJourneyDashboard(member).catch(() => null),
+  ]);
+
+  // Derive contribution summary from membership status (same paid totals /
+  // last date) — avoids a second and third contributions collection read.
+  const contributionStats = {
+    totalContributions: membershipStatus.totalContributions,
+    totalAmountCollected: membershipStatus.totalAmountPaid,
+    membersContributed: membershipStatus.totalContributions > 0 ? 1 : 0,
+  };
+  const lastContributionDate = membershipStatus.lastContributionDate;
+
+  const latestAnnouncement = visibleAnnouncements[0] ?? null;
+  const visibleAnnouncementCount = visibleAnnouncements.length;
+  const supportTypeLabelMap = Object.fromEntries(
+    supportTypes.map((type) => [type.code, type.displayName]),
+  );
 
   const completion = calculateProfileCompletion(toProfileCompletionContext(member));
 

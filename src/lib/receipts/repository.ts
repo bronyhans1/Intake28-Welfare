@@ -79,6 +79,36 @@ async function fetchAllRecords(): Promise<Receipt[]> {
   );
 }
 
+function receiptIssuedAtMs(record: Receipt): number {
+  const value = record.issuedAt as unknown;
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && value !== null && "seconds" in value) {
+    return Number((value as { seconds: number }).seconds) * 1000;
+  }
+  return 0;
+}
+
+/** Member-scoped receipts read — equality filter only (no composite index). */
+async function fetchRecordsByMemberId(memberId: string): Promise<Receipt[]> {
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection(COLLECTIONS.RECEIPTS)
+    .where("memberId", "==", memberId)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>))
+    .sort((left, right) => receiptIssuedAtMs(right) - receiptIssuedAtMs(left));
+}
+
 function receiptNumberExists(records: Receipt[], receiptNumber: string): boolean {
   return records.some((record) => record.receiptNumber === receiptNumber);
 }
@@ -265,16 +295,16 @@ export async function listMemberReceipts(
   memberId: string,
   query: ReceiptListQuery,
 ): Promise<ReceiptListResult> {
-  const records = (await fetchAllRecords()).filter(
-    (record) => record.memberId === memberId,
-  );
+  const records = await fetchRecordsByMemberId(memberId);
   return paginateReceipts(records, query);
 }
 
 export async function getReceiptStats(options?: {
   memberId?: string;
 }): Promise<ReceiptStats> {
-  const records = await fetchAllRecords();
+  const records = options?.memberId
+    ? await fetchRecordsByMemberId(options.memberId)
+    : await fetchAllRecords();
   const scoped = options?.memberId
     ? records.filter((record) => record.memberId === options.memberId)
     : records;

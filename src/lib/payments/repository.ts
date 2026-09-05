@@ -90,6 +90,45 @@ async function fetchAllRecords(): Promise<Payment[]> {
   );
 }
 
+function paymentCreatedAtMs(record: Payment): number {
+  const value = record.createdAt as unknown;
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && value !== null && "seconds" in value) {
+    return Number((value as { seconds: number }).seconds) * 1000;
+  }
+  return 0;
+}
+
+/** Member-scoped payments read — equality filter only (no composite index). */
+async function fetchRecordsByMemberId(memberId: string): Promise<Payment[]> {
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection(COLLECTIONS.PAYMENTS)
+    .where("memberId", "==", memberId)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>))
+    .sort((left, right) => paymentCreatedAtMs(right) - paymentCreatedAtMs(left));
+}
+
+async function fetchPaymentRecords(options?: {
+  memberId?: string;
+}): Promise<Payment[]> {
+  if (options?.memberId) {
+    return fetchRecordsByMemberId(options.memberId);
+  }
+  return fetchAllRecords();
+}
+
 export async function createPayment(
   input: Omit<Payment, "id" | "createdAt" | "updatedAt" | "paidAt">,
 ): Promise<SerializedPayment> {
@@ -246,7 +285,14 @@ export async function listPayments(
 ): Promise<PaymentListResult> {
   await abandonStalePendingPayments();
 
-  const records = await fetchAllRecords();
+  const scopedMemberId =
+    actor.role === UserRole.MEMBER
+      ? actor.uid
+      : query.memberId;
+
+  const records = await fetchPaymentRecords(
+    scopedMemberId ? { memberId: scopedMemberId } : undefined,
+  );
   const scopedRecords =
     actor.role === UserRole.MEMBER
       ? records.filter((record) => record.memberId === actor.uid)

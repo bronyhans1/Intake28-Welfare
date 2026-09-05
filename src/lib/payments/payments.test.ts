@@ -210,6 +210,7 @@ describe("payments repository", () => {
     mockCollection.mockReturnValue({
       doc: mockDoc,
       orderBy: mockOrderBy,
+      where: vi.fn().mockReturnValue({ get: mockGet }),
     });
     mockDoc.mockReturnValue({ id: "payment-1", set: mockSet, get: mockGet, update: mockUpdate });
     mockOrderBy.mockReturnValue({ get: mockGet });

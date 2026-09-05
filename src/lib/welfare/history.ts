@@ -37,7 +37,10 @@ async function fetchSuccessfulClaimDisbursements(
   memberId?: string,
 ): Promise<SerializedPayment[]> {
   const db = getAdminDb();
-  const snapshot = await db.collection(COLLECTIONS.PAYMENTS).get();
+  const collection = db.collection(COLLECTIONS.PAYMENTS);
+  const snapshot = memberId
+    ? await collection.where("memberId", "==", memberId).get()
+    : await collection.get();
 
   return snapshot.docs
     .map((doc) =>

@@ -45,6 +45,29 @@ export interface ContributionStats {
   membersContributed: number;
 }
 
+function contributionCreatedAtMs(record: Contribution): number {
+  const value = record.createdAt as unknown;
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && value !== null && "seconds" in value) {
+    return Number((value as { seconds: number }).seconds) * 1000;
+  }
+  return 0;
+}
+
+function sortContributionsByCreatedAtDesc(records: Contribution[]): Contribution[] {
+  return [...records].sort(
+    (left, right) => contributionCreatedAtMs(right) - contributionCreatedAtMs(left),
+  );
+}
+
 async function fetchAllRecords(): Promise<Contribution[]> {
   const db = getAdminDb();
   const snapshot = await db
@@ -55,6 +78,33 @@ async function fetchAllRecords(): Promise<Contribution[]> {
   return snapshot.docs.map((doc) =>
     mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>),
   );
+}
+
+/**
+ * Member-scoped contributions read (equality filter only — no composite index).
+ * Sorted newest-first in memory to match the collection-wide orderBy path.
+ */
+async function fetchRecordsByMemberId(memberId: string): Promise<Contribution[]> {
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection(COLLECTIONS.CONTRIBUTIONS)
+    .where("memberId", "==", memberId)
+    .get();
+
+  return sortContributionsByCreatedAtDesc(
+    snapshot.docs.map((doc) =>
+      mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>),
+    ),
+  );
+}
+
+async function fetchContributionRecords(options?: {
+  memberId?: string;
+}): Promise<Contribution[]> {
+  if (options?.memberId) {
+    return fetchRecordsByMemberId(options.memberId);
+  }
+  return fetchAllRecords();
 }
 
 export async function getContributionById(
@@ -94,10 +144,9 @@ export async function findPaidMonthlyDuesContribution(
   month: number,
   year: number,
 ): Promise<SerializedContribution | null> {
-  const records = await fetchAllRecords();
+  const records = await fetchRecordsByMemberId(memberId);
   const record = records.find(
     (item) =>
-      item.memberId === memberId &&
       item.contributionType === ContributionType.MONTHLY_DUES &&
       item.status === ContributionStatus.PAID &&
       item.month === month &&
@@ -217,7 +266,7 @@ export async function createAutomatedContribution(
 export async function listContributions(
   query: ContributionListQuery,
 ): Promise<ContributionListResult> {
-  const records = await fetchAllRecords();
+  const records = await fetchContributionRecords({ memberId: query.memberId });
 
   const filtered = records.filter((record) => {
     if (query.contributionType && record.contributionType !== query.contributionType) {
@@ -465,7 +514,7 @@ export async function getLastMonthlyDuesContributionDates(): Promise<
 export async function getContributionStats(
   filters: { memberId?: string; month?: number; year?: number } = {},
 ): Promise<ContributionStats> {
-  const records = await fetchAllRecords();
+  const records = await fetchContributionRecords({ memberId: filters.memberId });
 
   const filtered = records.filter((record) => {
     if (filters.memberId && record.memberId !== filters.memberId) return false;

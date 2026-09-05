@@ -69,7 +69,10 @@ describe("createReceipt idempotency", () => {
       get: mockGet,
     }));
     mockOrderBy.mockReturnValue({ get: mockGet });
-    mockWhere.mockReturnValue({ limit: mockLimit });
+    mockWhere.mockImplementation(() => ({
+      limit: mockLimit,
+      get: mockGet,
+    }));
     mockLimit.mockReturnValue({ get: mockGet });
 
     mockRunTransaction.mockImplementation(async (callback: (tx: {

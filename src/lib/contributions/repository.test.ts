@@ -152,9 +152,16 @@ describe("contributions repository", () => {
       }),
     });
 
+    const mockWhereGet = vi.fn().mockResolvedValue({
+      docs: [{ id: "c1", data: () => ({ ...baseRecord, id: undefined }) }],
+    });
+
     mockCollection.mockReturnValue({
       doc: mockDoc,
       orderBy: mockOrderBy,
+      where: vi.fn().mockReturnValue({
+        get: mockWhereGet,
+      }),
     });
 
     mockGetMonthlyDuesAmount.mockResolvedValue(50);
@@ -236,6 +243,29 @@ describe("contributions repository", () => {
     expect(stats.totalContributions).toBe(2);
     expect(stats.totalAmountCollected).toBe(150);
     expect(stats.membersContributed).toBe(2);
+  });
+
+  it("listContributions with memberId uses member-scoped query path", async () => {
+    const mockWhere = vi.fn().mockReturnValue({
+      get: vi.fn().mockResolvedValue({
+        docs: [{ id: "c1", data: () => ({ ...baseRecord, id: undefined }) }],
+      }),
+    });
+    mockCollection.mockReturnValue({
+      doc: mockDoc,
+      orderBy: mockOrderBy,
+      where: mockWhere,
+    });
+
+    const result = await listContributions({
+      page: 1,
+      pageSize: 10,
+      memberId: "m1",
+    });
+
+    expect(mockWhere).toHaveBeenCalledWith("memberId", "==", "m1");
+    expect(result.total).toBe(1);
+    expect(result.records[0]?.memberId).toBe("m1");
   });
 });
 

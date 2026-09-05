@@ -56,6 +56,45 @@ async function fetchAllRecords(): Promise<WelfareSupport[]> {
   return snapshot.docs.map((doc) => mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>));
 }
 
+function welfareCreatedAtMs(record: WelfareSupport): number {
+  const value = record.createdAt as unknown;
+  if (!value) return 0;
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    return (value as { toDate: () => Date }).toDate().getTime();
+  }
+  if (typeof value === "string") {
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof value === "object" && value !== null && "seconds" in value) {
+    return Number((value as { seconds: number }).seconds) * 1000;
+  }
+  return 0;
+}
+
+/** Member-scoped welfare_support read — equality filter only (no composite index). */
+async function fetchRecordsByMemberId(memberId: string): Promise<WelfareSupport[]> {
+  const db = getAdminDb();
+  const snapshot = await db
+    .collection(COLLECTIONS.WELFARE_SUPPORT)
+    .where("memberId", "==", memberId)
+    .get();
+
+  return snapshot.docs
+    .map((doc) => mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>))
+    .sort((left, right) => welfareCreatedAtMs(right) - welfareCreatedAtMs(left));
+}
+
+async function fetchWelfareSupportRecords(options?: {
+  memberId?: string;
+}): Promise<WelfareSupport[]> {
+  if (options?.memberId) {
+    return fetchRecordsByMemberId(options.memberId);
+  }
+  return fetchAllRecords();
+}
+
 function filterWelfareSupportRecords(
   records: WelfareSupport[],
   query: Omit<WelfareSupportListQuery, "page" | "pageSize">,
@@ -81,7 +120,7 @@ function filterWelfareSupportRecords(
 export async function fetchFilteredWelfareSupport(
   query: Omit<WelfareSupportListQuery, "page" | "pageSize">,
 ): Promise<SerializedWelfareSupport[]> {
-  const records = await fetchAllRecords();
+  const records = await fetchWelfareSupportRecords({ memberId: query.memberId });
   return filterWelfareSupportRecords(records, query).map(serializeRecord);
 }
 
@@ -101,7 +140,10 @@ export async function getWelfareSupportById(
 export async function listWelfareSupport(
   query: WelfareSupportListQuery,
 ): Promise<WelfareSupportListResult> {
-  const filtered = filterWelfareSupportRecords(await fetchAllRecords(), query);
+  const filtered = filterWelfareSupportRecords(
+    await fetchWelfareSupportRecords({ memberId: query.memberId }),
+    query,
+  );
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
