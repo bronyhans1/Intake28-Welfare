@@ -204,6 +204,8 @@ describe("system settings repository", () => {
         monthlyDuesAmount: 60,
         currency: SettingsCurrency.GHS,
         defaultAnnouncementExpiryDays: 30,
+        whatsappCommunityEnabled: true,
+        whatsappCommunityUrl: "https://chat.whatsapp.com/AbCdEfGhIjK",
       },
       actor,
     );
@@ -224,6 +226,78 @@ describe("system settings repository", () => {
     );
   });
 
+  it("persists WhatsApp community settings", async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({
+          ...DEFAULT_SYSTEM_SETTINGS,
+          updatedBy: "admin-1",
+          updatedAt: makeTimestamp("2026-06-01T00:00:00.000Z"),
+        }),
+      })
+      .mockResolvedValueOnce({
+        exists: true,
+        data: () => ({
+          ...DEFAULT_SYSTEM_SETTINGS,
+          whatsappCommunityEnabled: true,
+          whatsappCommunityUrl: "https://chat.whatsapp.com/AbCdEfGhIjK",
+          updatedBy: "admin-1",
+          updatedAt: makeTimestamp("2026-06-17T00:00:00.000Z"),
+        }),
+      });
+
+    const updated = await updateSystemSettings(
+      {
+        organizationName: DEFAULT_SYSTEM_SETTINGS.organizationName,
+        portalName: DEFAULT_SYSTEM_SETTINGS.portalName,
+        supportEmail: "",
+        monthlyDuesAmount: 50,
+        currency: SettingsCurrency.GHS,
+        defaultAnnouncementExpiryDays: 30,
+        whatsappCommunityEnabled: true,
+        whatsappCommunityUrl: "https://chat.whatsapp.com/AbCdEfGhIjK",
+      },
+      actor,
+    );
+
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        whatsappCommunityEnabled: true,
+        whatsappCommunityUrl: "https://chat.whatsapp.com/AbCdEfGhIjK",
+      }),
+      { merge: true },
+    );
+    expect(updated.whatsappCommunityEnabled).toBe(true);
+    expect(updated.whatsappCommunityUrl).toBe(
+      "https://chat.whatsapp.com/AbCdEfGhIjK",
+    );
+  });
+
+  it("defaults missing WhatsApp fields to disabled/empty when reading settings", async () => {
+    mockGet.mockResolvedValue({
+      exists: true,
+      data: () => ({
+        organizationName: DEFAULT_SYSTEM_SETTINGS.organizationName,
+        portalName: DEFAULT_SYSTEM_SETTINGS.portalName,
+        supportEmail: "",
+        supportPhone: "",
+        monthlyDuesAmount: 50,
+        currency: SettingsCurrency.GHS,
+        defaultAnnouncementExpiryDays: 30,
+        defaulterThresholdMonths: 2,
+        serviceNumberPrefix: "IS/",
+        receiptNumberPrefix: "GIS",
+        updatedBy: "admin-1",
+        updatedAt: makeTimestamp("2026-06-01T00:00:00.000Z"),
+      }),
+    });
+
+    const settings = await getSystemSettings();
+    expect(settings.whatsappCommunityEnabled).toBe(false);
+    expect(settings.whatsappCommunityUrl).toBe("");
+  });
+
   it("prevents non-admins from updating settings", async () => {
     await expect(
       updateSystemSettings(
@@ -234,6 +308,8 @@ describe("system settings repository", () => {
           monthlyDuesAmount: 50,
           currency: SettingsCurrency.GHS,
           defaultAnnouncementExpiryDays: 30,
+          whatsappCommunityEnabled: false,
+          whatsappCommunityUrl: "",
         },
         { ...actor, role: UserRole.TREASURER },
       ),

@@ -70,6 +70,11 @@ function normalizeSettingsData(data: Record<string, unknown>): SystemSettingsDat
       typeof data.receiptNumberPrefix === "string" && data.receiptNumberPrefix.trim()
         ? data.receiptNumberPrefix.trim()
         : DEFAULT_SYSTEM_SETTINGS.receiptNumberPrefix,
+    whatsappCommunityEnabled: data.whatsappCommunityEnabled === true,
+    whatsappCommunityUrl:
+      typeof data.whatsappCommunityUrl === "string"
+        ? data.whatsappCommunityUrl.trim()
+        : DEFAULT_SYSTEM_SETTINGS.whatsappCommunityUrl,
   };
 }
 
@@ -151,7 +156,9 @@ function getChangedSections(
     before.organizationName !== after.organizationName ||
     before.portalName !== after.portalName ||
     before.supportEmail !== after.supportEmail ||
-    before.supportPhone !== (after.supportPhone ?? "")
+    before.supportPhone !== (after.supportPhone ?? "") ||
+    before.whatsappCommunityEnabled !== after.whatsappCommunityEnabled ||
+    before.whatsappCommunityUrl !== after.whatsappCommunityUrl
   ) {
     sections.push(SETTINGS_SECTIONS.ORGANIZATION);
   }
@@ -193,6 +200,8 @@ export async function updateSystemSettings(
     monthlyDuesAmount: input.monthlyDuesAmount,
     currency: input.currency,
     defaultAnnouncementExpiryDays: input.defaultAnnouncementExpiryDays,
+    whatsappCommunityEnabled: input.whatsappCommunityEnabled,
+    whatsappCommunityUrl: input.whatsappCommunityUrl.trim(),
   };
 
   const changedSections = getChangedSections(existing, input);

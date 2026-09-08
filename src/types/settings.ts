@@ -13,6 +13,10 @@ export interface SystemSettings {
   defaulterThresholdMonths: number;
   serviceNumberPrefix: "IS/";
   receiptNumberPrefix: string;
+  /** When true and a valid URL is set, members see the WhatsApp community FAB. */
+  whatsappCommunityEnabled: boolean;
+  /** Official WhatsApp group/community invite URL (HTTPS). */
+  whatsappCommunityUrl: string;
   updatedAt: Timestamp;
   updatedBy: string;
 }
@@ -35,6 +39,8 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettingsData = {
   defaulterThresholdMonths: 2,
   serviceNumberPrefix: "IS/",
   receiptNumberPrefix: "GIS",
+  whatsappCommunityEnabled: false,
+  whatsappCommunityUrl: "",
 };
 
 export const SETTINGS_SECTIONS = {

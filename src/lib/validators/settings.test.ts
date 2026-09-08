@@ -8,6 +8,8 @@ const validBase = {
   monthlyDuesAmount: 50,
   currency: SettingsCurrency.GHS,
   defaultAnnouncementExpiryDays: 30,
+  whatsappCommunityEnabled: false,
+  whatsappCommunityUrl: "",
 };
 
 describe("updateSystemSettingsSchema", () => {
@@ -47,6 +49,46 @@ describe("updateSystemSettingsSchema", () => {
       organizationName: "",
       portalName: "",
       supportEmail: "",
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts blank WhatsApp URL and disabled toggle", () => {
+    const result = updateSystemSettingsSchema.safeParse({
+      ...validBase,
+      supportEmail: "",
+      whatsappCommunityEnabled: "false",
+      whatsappCommunityUrl: "",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.whatsappCommunityEnabled).toBe(false);
+      expect(result.data.whatsappCommunityUrl).toBe("");
+    }
+  });
+
+  it("accepts enabled toggle with a valid WhatsApp invite URL", () => {
+    const result = updateSystemSettingsSchema.safeParse({
+      ...validBase,
+      supportEmail: "",
+      whatsappCommunityEnabled: "true",
+      whatsappCommunityUrl: "https://chat.whatsapp.com/AbCdEfGhIjK",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.whatsappCommunityEnabled).toBe(true);
+    }
+  });
+
+  it("rejects invalid WhatsApp URLs when provided", () => {
+    const result = updateSystemSettingsSchema.safeParse({
+      ...validBase,
+      supportEmail: "",
+      whatsappCommunityEnabled: true,
+      whatsappCommunityUrl: "https://example.com/group",
     });
 
     expect(result.success).toBe(false);

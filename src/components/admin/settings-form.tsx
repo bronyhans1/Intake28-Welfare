@@ -20,7 +20,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { SystemInformation } from "@/lib/system-settings/info";
+import { isValidWhatsAppCommunityUrl } from "@/lib/system-settings/whatsapp";
 import { SETTINGS_CURRENCY_LABELS, SettingsCurrency } from "@/types/enums";
 import type { SerializedSystemSettings } from "@/types/settings";
 
@@ -37,6 +39,8 @@ type SettingsFormState = {
   monthlyDuesAmount: string;
   currency: SettingsCurrency;
   defaultAnnouncementExpiryDays: string;
+  whatsappCommunityEnabled: boolean;
+  whatsappCommunityUrl: string;
 };
 
 const initialState: SettingsActionState = {};
@@ -50,6 +54,8 @@ function buildSettingsFormState(settings: SerializedSystemSettings): SettingsFor
     monthlyDuesAmount: String(settings.monthlyDuesAmount),
     currency: settings.currency,
     defaultAnnouncementExpiryDays: String(settings.defaultAnnouncementExpiryDays),
+    whatsappCommunityEnabled: settings.whatsappCommunityEnabled === true,
+    whatsappCommunityUrl: settings.whatsappCommunityUrl ?? "",
   };
 }
 
@@ -139,6 +145,72 @@ export function SettingsForm({ settings, systemInfo }: SettingsFormProps) {
                 />
                 <FieldError errors={mapFieldErrors(state.fieldErrors?.supportPhone)} />
               </Field>
+            </FieldGroup>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>WhatsApp Community</CardTitle>
+            <CardDescription>
+              Configure the official WhatsApp group or community link displayed
+              to members on the Welfare Portal.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <FieldGroup>
+              <Field data-invalid={!!state.fieldErrors?.whatsappCommunityUrl}>
+                <FieldLabel htmlFor="whatsappCommunityUrl">
+                  WhatsApp Community Link
+                </FieldLabel>
+                <Input
+                  id="whatsappCommunityUrl"
+                  name="whatsappCommunityUrl"
+                  type="url"
+                  inputMode="url"
+                  value={form.whatsappCommunityUrl}
+                  onChange={(event) =>
+                    updateField("whatsappCommunityUrl", event.target.value)
+                  }
+                  placeholder="https://chat.whatsapp.com/..."
+                />
+                <FieldError
+                  errors={mapFieldErrors(state.fieldErrors?.whatsappCommunityUrl)}
+                />
+              </Field>
+
+              <div className="flex items-start gap-3">
+                <Switch
+                  id="whatsappCommunityEnabled"
+                  checked={form.whatsappCommunityEnabled}
+                  onCheckedChange={(enabled) =>
+                    updateField("whatsappCommunityEnabled", enabled)
+                  }
+                  aria-label="Show WhatsApp Button"
+                />
+                <input
+                  type="hidden"
+                  name="whatsappCommunityEnabled"
+                  value={form.whatsappCommunityEnabled ? "true" : "false"}
+                />
+                <div className="space-y-1">
+                  <FieldLabel htmlFor="whatsappCommunityEnabled" className="font-medium">
+                    Show WhatsApp Button
+                  </FieldLabel>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled and a WhatsApp link is configured, members will
+                    see a WhatsApp button on the lower-right corner of the
+                    Welfare Portal.
+                  </p>
+                </div>
+              </div>
+
+              {form.whatsappCommunityEnabled &&
+              !isValidWhatsAppCommunityUrl(form.whatsappCommunityUrl) ? (
+                <p className="text-sm text-amber-800">
+                  A valid WhatsApp link is required for the button to appear.
+                </p>
+              ) : null}
             </FieldGroup>
           </CardContent>
         </Card>

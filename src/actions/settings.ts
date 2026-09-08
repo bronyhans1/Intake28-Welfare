@@ -54,6 +54,8 @@ export async function updateSettingsAction(
     monthlyDuesAmount: formData.get("monthlyDuesAmount"),
     currency: formData.get("currency"),
     defaultAnnouncementExpiryDays: formData.get("defaultAnnouncementExpiryDays"),
+    whatsappCommunityEnabled: formData.get("whatsappCommunityEnabled"),
+    whatsappCommunityUrl: formData.get("whatsappCommunityUrl")?.toString() ?? "",
   });
 
   if (!parsed.success) {
@@ -66,6 +68,8 @@ export async function updateSettingsAction(
     revalidatePath("/admin/finance");
     revalidatePath("/admin/reports");
     revalidatePath("/admin/contributions/new");
+    revalidatePath("/dashboard");
+    revalidatePath("/portal", "layout");
     return { success: true };
   } catch {
     return { error: "Failed to save settings." };
