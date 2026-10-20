@@ -70,6 +70,9 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   [PaymentAuditAction.PAYMENT_INITIALIZED]: "Payment initialized",
   [PaymentAuditAction.PAYMENT_VERIFIED]: "Payment verified",
   [PaymentAuditAction.PAYMENT_CONTRIBUTION_CREATED]: "Payment contribution created",
+  [PaymentAuditAction.PAYMENT_RECOVERY]: "Payment recovered",
+  [PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME]: "Paystack webhook outcome",
+  [PaymentAuditAction.PAYMENT_CALLBACK_OUTCOME]: "Paystack callback outcome",
   [ReceiptAuditAction.RECEIPT_GENERATED]: "Receipt generated",
   [ReceiptAuditAction.RECEIPT_DOWNLOADED]: "Receipt downloaded",
   [ReceiptAuditAction.RECEIPT_CANCELLED]: "Receipt cancelled",
@@ -473,6 +476,43 @@ export function formatAuditDescription(
       return `Payment verification completed (${status})`;
     }
     return "Payment verified";
+  }
+
+  if (action === PaymentAuditAction.PAYMENT_RECOVERY) {
+    const outcome = typeof metadata?.outcome === "string" ? metadata.outcome : null;
+    const paymentReference =
+      typeof metadata?.paymentReference === "string" ? metadata.paymentReference : null;
+    const refLabel = paymentReference ? ` (${paymentReference})` : "";
+    if (outcome === "recovered") {
+      return `Payment recovered from reconciliation${refLabel}`;
+    }
+    if (outcome === "already_settled") {
+      return `Payment recovery skipped; already settled${refLabel}`;
+    }
+    if (outcome) {
+      return `Payment recovery ${outcome.replace(/_/g, " ")}${refLabel}`;
+    }
+    return `Payment recovery${refLabel}`;
+  }
+
+  if (
+    action === PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME ||
+    action === PaymentAuditAction.PAYMENT_CALLBACK_OUTCOME
+  ) {
+    const outcome = typeof metadata?.outcome === "string" ? metadata.outcome : null;
+    const category = typeof metadata?.category === "string" ? metadata.category : null;
+    const paymentReference =
+      typeof metadata?.paymentReference === "string" ? metadata.paymentReference : null;
+    const refLabel = paymentReference ? ` (${paymentReference})` : "";
+    const channel =
+      action === PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME ? "Webhook" : "Callback";
+    if (outcome && category) {
+      return `${channel} ${outcome.replace(/_/g, " ")}: ${category.replace(/_/g, " ")}${refLabel}`;
+    }
+    if (outcome) {
+      return `${channel} ${outcome.replace(/_/g, " ")}${refLabel}`;
+    }
+    return `${channel} outcome${refLabel}`;
   }
 
   if (action === PaymentAuditAction.PAYMENT_CONTRIBUTION_CREATED) {

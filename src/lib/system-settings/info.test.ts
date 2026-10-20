@@ -9,10 +9,10 @@ describe("getSystemInformation", () => {
   it("returns simplified version and branding labels from APP_VERSION", () => {
     const info = getSystemInformation();
 
-    expect(APP_VERSION).toBe("1.7.5");
+    expect(APP_VERSION).toBe("1.8.0");
     expect(info.versionLabel).toBe(APPLICATION_VERSION_LABEL);
     expect(info.versionLabel).toBe(formatAppVersionLabel());
-    expect(info.versionLabel).toBe("Version 1.7.5");
+    expect(info.versionLabel).toBe("Version 1.8.0");
     expect(info.poweredByLabel).toBe("Powered by Brony Hans");
   });
 });

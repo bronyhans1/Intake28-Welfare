@@ -1,4 +1,4 @@
-import { FieldValue } from "firebase-admin/firestore";
+import { FieldValue, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { createAuditLog } from "@/lib/audit/repository";
 import { buildAuditActor } from "@/lib/audit/actor";
 import { ContributionAuditAction } from "@/lib/contributions/audit";
@@ -291,12 +291,11 @@ export async function createAutomatedContribution(
   return { contribution: finalDoc, created };
 }
 
-export async function listContributions(
-  query: ContributionListQuery,
-): Promise<ContributionListResult> {
-  const records = await fetchContributionRecords({ memberId: query.memberId });
-
-  const filtered = records.filter((record) => {
+function filterContributionRecords(
+  records: Contribution[],
+  query: Omit<ContributionListQuery, "page" | "pageSize">,
+): Contribution[] {
+  return records.filter((record) => {
     if (query.contributionType && record.contributionType !== query.contributionType) {
       return false;
     }
@@ -313,6 +312,72 @@ export async function listContributions(
     }
     return true;
   });
+}
+
+async function fetchOrderedContributionPage(
+  pageSize: number,
+  cursor?: QueryDocumentSnapshot,
+) {
+  const db = getAdminDb();
+  let query = db
+    .collection(COLLECTIONS.CONTRIBUTIONS)
+    .orderBy("createdAt", "desc")
+    .limit(pageSize);
+
+  if (cursor) {
+    query = query.startAfter(cursor);
+  }
+
+  return query.get();
+}
+
+/**
+ * Reads matching contributions once through.
+ * Unscoped reads advance with a document cursor. A member filter uses one
+ * equality query, because ordering that query would require a composite index.
+ */
+export async function listAllMatchingContributions(
+  filters: Omit<ContributionListQuery, "page" | "pageSize">,
+  pageSize = 100,
+): Promise<SerializedContribution[]> {
+  const safePageSize = Math.max(1, Math.floor(pageSize));
+
+  if (filters.memberId) {
+    const records = await fetchContributionRecords({ memberId: filters.memberId });
+    return filterContributionRecords(records, filters).map(serializeRecord);
+  }
+
+  const matched: SerializedContribution[] = [];
+  const seenIds = new Set<string>();
+  let cursor: QueryDocumentSnapshot | undefined;
+
+  for (;;) {
+    const snapshot = await fetchOrderedContributionPage(safePageSize, cursor);
+    if (snapshot.empty) break;
+
+    const pageRecords = snapshot.docs.map((doc) =>
+      mapFirestoreDoc(doc.id, doc.data() as Record<string, unknown>),
+    );
+    for (const record of filterContributionRecords(pageRecords, filters)) {
+      if (seenIds.has(record.id)) continue;
+      seenIds.add(record.id);
+      matched.push(serializeRecord(record));
+    }
+
+    const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+    if (!lastDoc || snapshot.size < safePageSize) break;
+    cursor = lastDoc;
+  }
+
+  return matched;
+}
+
+export async function listContributions(
+  query: ContributionListQuery,
+): Promise<ContributionListResult> {
+  const records = await fetchContributionRecords({ memberId: query.memberId });
+
+  const filtered = filterContributionRecords(records, query);
 
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / query.pageSize));

@@ -271,6 +271,22 @@ export async function updatePaymentStatus(
   return updated;
 }
 
+/**
+ * One ordered payments read for a single report.
+ * The first document for a reference wins, matching getPaymentByReference.
+ */
+export async function loadPaymentsByReference(): Promise<Map<string, SerializedPayment>> {
+  const records = await fetchAllRecords();
+  const byReference = new Map<string, SerializedPayment>();
+
+  for (const record of records) {
+    if (!record.reference || byReference.has(record.reference)) continue;
+    byReference.set(record.reference, serializeRecord(record));
+  }
+
+  return byReference;
+}
+
 export async function getPaymentByReference(
   reference: string,
 ): Promise<SerializedPayment | null> {

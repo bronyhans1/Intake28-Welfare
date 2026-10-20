@@ -42,6 +42,7 @@ import {
   createContribution,
   getContributionMonths,
   getContributionStats,
+  listAllMatchingContributions,
   listAllMemberContributions,
   listContributions,
   updateContribution,
@@ -301,6 +302,79 @@ describe("contributions repository", () => {
     expect(stats.totalContributions).toBe(2);
     expect(stats.totalAmountCollected).toBe(150);
     expect(stats.membersContributed).toBe(1);
+  });
+
+  it("continues contribution pages from the previous cursor without rereading the collection", async () => {
+    const storedRecord = { ...baseRecord };
+    delete storedRecord.id;
+    const pages = [
+      [
+        { id: "c1", data: () => ({ ...storedRecord, year: 2026 }) },
+        { id: "c2", data: () => ({ ...storedRecord, year: 2024, memberName: "Older" }) },
+      ],
+      [
+        { id: "c2", data: () => ({ ...storedRecord, year: 2024, memberName: "Older" }) },
+        { id: "c3", data: () => ({ ...storedRecord, year: 2026, memberName: "Later" }) },
+      ],
+      [{ id: "c4", data: () => ({ ...storedRecord, year: 2026, memberName: "Last" }) }],
+    ];
+    let pageIndex = 0;
+    const cursors: string[] = [];
+    const unboundedGet = vi.fn();
+    const pagedGet = vi.fn(async () => {
+      const docs = pages[pageIndex] ?? [];
+      pageIndex += 1;
+      return { docs, size: docs.length, empty: docs.length === 0 };
+    });
+    const pagedQuery = {
+      startAfter: vi.fn((doc: { id: string }) => {
+        cursors.push(doc.id);
+        return pagedQuery;
+      }),
+      get: pagedGet,
+    };
+    mockOrderBy.mockReturnValue({
+      get: unboundedGet,
+      limit: vi.fn(() => pagedQuery),
+    });
+    mockCollection.mockReturnValue({
+      doc: mockDoc,
+      orderBy: mockOrderBy,
+      where: vi.fn(),
+    });
+
+    const records = await listAllMatchingContributions({ year: 2026 }, 2);
+
+    expect(unboundedGet).not.toHaveBeenCalled();
+    expect(mockOrderBy).toHaveBeenCalledWith("createdAt", "desc");
+    expect(pagedGet).toHaveBeenCalledTimes(3);
+    expect(cursors).toEqual(["c2", "c3"]);
+    expect(records.map((record) => record.id)).toEqual(["c1", "c3", "c4"]);
+  });
+
+  it("loads a member contribution report with one equality query", async () => {
+    const storedRecord = { ...baseRecord };
+    delete storedRecord.id;
+    const memberGet = vi.fn().mockResolvedValue({
+      docs: [
+        { id: "c1", data: () => ({ ...storedRecord }) },
+        { id: "c9", data: () => ({ ...storedRecord, year: 2024 }) },
+      ],
+    });
+    const mockWhere = vi.fn().mockReturnValue({ get: memberGet });
+    mockCollection.mockReturnValue({
+      doc: mockDoc,
+      orderBy: mockOrderBy,
+      where: mockWhere,
+    });
+
+    const records = await listAllMatchingContributions({ memberId: "m1", year: 2026 }, 2);
+
+    expect(mockWhere).toHaveBeenCalledTimes(1);
+    expect(mockWhere).toHaveBeenCalledWith("memberId", "==", "m1");
+    expect(memberGet).toHaveBeenCalledTimes(1);
+    expect(mockOrderBy).not.toHaveBeenCalled();
+    expect(records.map((record) => record.id)).toEqual(["c1"]);
   });
 });
 

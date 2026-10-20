@@ -6,9 +6,9 @@ import {
 } from "@/lib/branding/version";
 
 describe("application version", () => {
-  it("exposes a single Version 1.7.5 source of truth", () => {
-    expect(APP_VERSION).toBe("1.7.5");
-    expect(formatAppVersionLabel()).toBe("Version 1.7.5");
-    expect(APPLICATION_VERSION_LABEL).toBe("Version 1.7.5");
+  it("exposes a single Version 1.8.0 source of truth", () => {
+    expect(APP_VERSION).toBe("1.8.0");
+    expect(formatAppVersionLabel()).toBe("Version 1.8.0");
+    expect(APPLICATION_VERSION_LABEL).toBe("Version 1.8.0");
   });
 });

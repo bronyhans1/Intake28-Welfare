@@ -515,6 +515,20 @@ describe("settlePaymentFromPaystackReference", () => {
     expect(result.outcome).toBe("failed");
     expect(mockEnsureContributionFromPayment).not.toHaveBeenCalled();
   });
+
+  it("marks Paystack verify request failures as retryable settlement errors", async () => {
+    const { PaystackRequestError } = await import("@/lib/integrations/paystack/client");
+    mockGetPaymentByReference.mockResolvedValue(makePayment());
+    mockPaystackVerify.mockRejectedValue(
+      new PaystackRequestError("Failed to verify Paystack payment."),
+    );
+
+    await expect(settlePaymentFromPaystackReference(reference)).rejects.toMatchObject({
+      name: "PaymentSettlementError",
+      message: "Failed to verify Paystack payment.",
+      retryable: true,
+    });
+  });
 });
 
 describe("paystack webhook signature", () => {
@@ -542,21 +556,32 @@ describe("payment API routes", () => {
   const mockSettle = vi.fn();
   const mockVerifySignature = vi.fn();
   const mockFirebaseConfigured = vi.fn();
+  const mockCreateAuditLog = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
     mockFirebaseConfigured.mockReturnValue(true);
     mockVerifySignature.mockReturnValue(true);
+    mockCreateAuditLog.mockResolvedValue("audit-1");
     mockSettle.mockResolvedValue({
       outcome: "settled",
       payment: makePayment({ status: PaymentStatus.SUCCESS }),
+      message: "Payment settled successfully.",
     });
   });
 
   async function loadRoutes() {
     vi.doMock("@/lib/payments/settlement", () => ({
       PaymentSettlementError,
+      PAYSTACK_SETTLEMENT_ACTOR: {
+        uid: "paystack-automation",
+        fullName: "Paystack Automation",
+        serviceNumber: "SYSTEM",
+        role: UserRole.ADMIN,
+        profileCompleted: true,
+        profileCompletionPercentage: 100,
+      },
       settlePaymentFromPaystackReference: (...args: unknown[]) => mockSettle(...args),
     }));
     vi.doMock("@/lib/integrations/paystack/webhook-signature", () => ({
@@ -565,6 +590,9 @@ describe("payment API routes", () => {
     }));
     vi.doMock("@/lib/firebase/admin", () => ({
       isFirebaseAdminConfigured: () => mockFirebaseConfigured(),
+    }));
+    vi.doMock("@/lib/audit/repository", () => ({
+      createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
     }));
     vi.doMock("@/config/env", () => ({
       env: {
@@ -577,6 +605,17 @@ describe("payment API routes", () => {
     return { callback, webhook };
   }
 
+  function webhookRequest(body: string, signature = "valid") {
+    return new Request("http://localhost:3000/api/payments/webhook", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-paystack-signature": signature,
+      },
+      body,
+    });
+  }
+
   it("J. callback route uses shared settlement", async () => {
     const { callback } = await loadRoutes();
 
@@ -587,6 +626,12 @@ describe("payment API routes", () => {
     expect(response.status).toBe(307);
     expect(mockSettle).toHaveBeenCalledWith("GIS-TEST", { source: "callback" });
     expect(response.headers.get("location")).toBe("http://localhost:3000/payments?verified=1");
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: PaymentAuditAction.PAYMENT_CALLBACK_OUTCOME,
+        metadata: expect.objectContaining({ category: "settled" }),
+      }),
+    );
   });
 
   it("N. duplicate webhook delivery is safe", async () => {
@@ -596,24 +641,24 @@ describe("payment API routes", () => {
       data: { reference, status: "success", amount: 5000, currency: "GHS" },
     });
 
-    const request = () =>
-      webhook.POST(
-        new Request("http://localhost:3000/api/payments/webhook", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-paystack-signature": "valid",
-          },
-          body,
-        }),
-      );
+    mockSettle
+      .mockResolvedValueOnce({
+        outcome: "settled",
+        payment: makePayment({ status: PaymentStatus.SUCCESS }),
+      })
+      .mockResolvedValueOnce({
+        outcome: "already_settled",
+        payment: makePayment({ status: PaymentStatus.SUCCESS }),
+      });
 
-    const first = await request();
-    const second = await request();
+    const first = await webhook.POST(webhookRequest(body));
+    const second = await webhook.POST(webhookRequest(body));
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(mockSettle).toHaveBeenCalledTimes(2);
+    const secondBody = await second.json();
+    expect(secondBody.category).toBe("already_settled");
   });
 
   it("Q. charge.failed webhook does not call settlement", async () => {
@@ -623,35 +668,23 @@ describe("payment API routes", () => {
       data: { reference, status: "failed" },
     });
 
-    const response = await webhook.POST(
-      new Request("http://localhost:3000/api/payments/webhook", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-paystack-signature": "valid",
-        },
-        body,
-      }),
-    );
+    const response = await webhook.POST(webhookRequest(body));
 
     expect(response.status).toBe(200);
     expect(mockSettle).not.toHaveBeenCalled();
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME,
+        metadata: expect.objectContaining({ category: "charge_failed_ignored" }),
+      }),
+    );
   });
 
   it("R. unsupported webhook event does not settle payment", async () => {
     const { webhook } = await loadRoutes();
     const body = JSON.stringify({ event: "transfer.success", data: {} });
 
-    const response = await webhook.POST(
-      new Request("http://localhost:3000/api/payments/webhook", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-paystack-signature": "valid",
-        },
-        body,
-      }),
-    );
+    const response = await webhook.POST(webhookRequest(body));
 
     expect(response.status).toBe(200);
     expect(mockSettle).not.toHaveBeenCalled();
@@ -662,18 +695,145 @@ describe("payment API routes", () => {
     const { webhook } = await loadRoutes();
     const body = JSON.stringify({ event: "charge.success", data: { reference } });
 
-    const response = await webhook.POST(
-      new Request("http://localhost:3000/api/payments/webhook", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-paystack-signature": "bad",
-        },
-        body,
-      }),
-    );
+    const response = await webhook.POST(webhookRequest(body, "bad"));
 
     expect(response.status).toBe(401);
     expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it("webhook permanent validation failure returns 200 skipped", async () => {
+    mockSettle.mockRejectedValue(new PaymentSettlementError("Payment not found."));
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({
+      event: "charge.success",
+      data: { reference },
+    });
+
+    const response = await webhook.POST(webhookRequest(body));
+    const payload = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(payload.skipped).toBe(true);
+    expect(payload.category).toBe("payment_not_found");
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME,
+        metadata: expect.objectContaining({
+          category: "payment_not_found",
+          outcome: "rejected_permanent",
+        }),
+      }),
+    );
+    expect(JSON.stringify(mockCreateAuditLog.mock.calls)).not.toMatch(/sk_test|signature|secret/i);
+  });
+
+  it("webhook amount mismatch returns permanent 200 acknowledgement", async () => {
+    mockSettle.mockRejectedValue(
+      new PaymentSettlementError(
+        "Paystack amount does not match the expected payment amount.",
+      ),
+    );
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: { reference } });
+    const response = await webhook.POST(webhookRequest(body));
+    expect(response.status).toBe(200);
+    expect((await response.json()).category).toBe("amount_mismatch");
+  });
+
+  it("webhook retryable verify failure returns 503", async () => {
+    mockSettle.mockRejectedValue(
+      new PaymentSettlementError("Failed to verify Paystack payment.", {
+        retryable: true,
+      }),
+    );
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: { reference } });
+    const response = await webhook.POST(webhookRequest(body));
+    expect(response.status).toBe(503);
+    expect((await response.json()).category).toBe("paystack_verify_unavailable");
+  });
+
+  it("webhook post-success recording failure returns 500 for retry/heal", async () => {
+    mockSettle.mockRejectedValue(new Error("contribution write failed"));
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: { reference } });
+    const response = await webhook.POST(webhookRequest(body));
+    expect(response.status).toBe(500);
+    expect((await response.json()).category).toBe("post_success_recording_error");
+  });
+
+  it("webhook malformed JSON returns 400", async () => {
+    const { webhook } = await loadRoutes();
+    const response = await webhook.POST(webhookRequest("{not-json"));
+    expect(response.status).toBe(400);
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it("webhook missing reference returns 400", async () => {
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: {} });
+    const response = await webhook.POST(webhookRequest(body));
+    expect(response.status).toBe(400);
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+
+  it("webhook non-success verify outcome is acknowledged with 200", async () => {
+    mockSettle.mockResolvedValue({
+      outcome: "failed",
+      payment: makePayment({ status: PaymentStatus.FAILED }),
+      message: "Paystack reported status: failed.",
+    });
+    const { webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: { reference } });
+    const response = await webhook.POST(webhookRequest(body));
+    expect(response.status).toBe(200);
+    expect((await response.json()).category).toBe("non_success_status");
+  });
+
+  it("callback permanent rejection redirects without exposing internals", async () => {
+    mockSettle.mockRejectedValue(
+      new PaymentSettlementError(
+        "Paystack currency does not match the expected payment currency.",
+      ),
+    );
+    const { callback } = await loadRoutes();
+    const response = await callback.GET(
+      new Request(`http://localhost:3000/api/payments/callback?reference=${reference}`),
+    );
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      "http://localhost:3000/payments?error=verification_failed",
+    );
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: PaymentAuditAction.PAYMENT_CALLBACK_OUTCOME,
+        metadata: expect.objectContaining({ category: "currency_mismatch" }),
+      }),
+    );
+  });
+
+  it("concurrent callback and webhook remain safe with hardened ingest", async () => {
+    mockSettle
+      .mockResolvedValueOnce({
+        outcome: "settled",
+        payment: makePayment({ status: PaymentStatus.SUCCESS }),
+      })
+      .mockResolvedValueOnce({
+        outcome: "already_settled",
+        payment: makePayment({ status: PaymentStatus.SUCCESS }),
+      });
+    const { callback, webhook } = await loadRoutes();
+    const body = JSON.stringify({ event: "charge.success", data: { reference } });
+
+    const [webhookResponse, callbackResponse] = await Promise.all([
+      webhook.POST(webhookRequest(body)),
+      callback.GET(
+        new Request(`http://localhost:3000/api/payments/callback?reference=${reference}`),
+      ),
+    ]);
+
+    expect(webhookResponse.status).toBe(200);
+    expect(callbackResponse.status).toBe(307);
+    expect(mockSettle).toHaveBeenCalledTimes(2);
   });
 });

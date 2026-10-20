@@ -85,6 +85,12 @@ async function logPaymentContributionAudit(
   });
 }
 
+export function expectedContributionPeriodsForPayment(
+  payment: Pick<SerializedPayment, "selectedMonths">,
+): MonthYear[] {
+  return resolveTargetMonths(payment as SerializedPayment);
+}
+
 function resolveTargetMonths(payment: SerializedPayment): MonthYear[] {
   const selected = payment.selectedMonths;
   if (Array.isArray(selected) && selected.length > 0) {

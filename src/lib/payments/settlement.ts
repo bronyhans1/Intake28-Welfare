@@ -1,14 +1,16 @@
 import { createAuditLog } from "@/lib/audit/repository";
 import { buildAuditActor } from "@/lib/audit/actor";
 import {
-  normalizePaystackCurrency,
-  toPaystackMinorUnits,
-} from "@/lib/integrations/paystack/webhook-signature";
-import {
   paystackVerifyTransaction,
   PaystackRequestError,
-  type PaystackVerifiedTransaction,
 } from "@/lib/integrations/paystack/client";
+import {
+  PaymentSettlementError,
+  validatePaystackBusinessAmount,
+  validatePaystackCurrency,
+  validatePaystackReference,
+  resolvePaystackBusinessAmountMinor,
+} from "@/lib/payments/paystack-settlement-rules";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import { ensureContributionFromPayment } from "@/lib/payments/contribution-automation";
 import { abandonStalePendingPayments } from "@/lib/payments/lifecycle";
@@ -20,14 +22,9 @@ import { PaymentStatus, UserRole } from "@/types/enums";
 import type { CurrentUser } from "@/types/auth";
 import type { SerializedPayment } from "@/types/payment";
 
-export class PaymentSettlementError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PaymentSettlementError";
-  }
-}
+export { PaymentSettlementError } from "@/lib/payments/paystack-settlement-rules";
 
-export type PaymentSettlementSource = "verify" | "callback" | "webhook";
+export type PaymentSettlementSource = "verify" | "callback" | "webhook" | "recovery";
 
 export type PaymentSettlementOutcome =
   | "settled"
@@ -61,69 +58,6 @@ function logSettlement(
   details: Record<string, unknown>,
 ): void {
   console.info("[paystack settlement]", event, details);
-}
-
-function validatePaystackReference(
-  expectedReference: string,
-  providerReference: string,
-): void {
-  if (providerReference !== expectedReference) {
-    throw new PaymentSettlementError(
-      "Paystack reference does not match the expected payment reference.",
-    );
-  }
-}
-
-function resolvePaystackBusinessAmountMinor(
-  verification: Pick<
-    PaystackVerifiedTransaction,
-    "amount" | "requestedAmount" | "fees"
-  >,
-): number {
-  if (verification.requestedAmount != null) {
-    return verification.requestedAmount;
-  }
-  if (verification.fees != null) {
-    return verification.amount - verification.fees;
-  }
-  return verification.amount;
-}
-
-function validatePaystackBusinessAmount(
-  payment: SerializedPayment,
-  verification: Pick<
-    PaystackVerifiedTransaction,
-    "amount" | "requestedAmount" | "fees"
-  >,
-): void {
-  const expectedMinor = toPaystackMinorUnits(payment.amount);
-  const businessMinor = resolvePaystackBusinessAmountMinor(verification);
-
-  if (businessMinor < expectedMinor) {
-    throw new PaymentSettlementError(
-      "Paystack amount does not match the expected payment amount.",
-    );
-  }
-
-  if (businessMinor !== expectedMinor) {
-    throw new PaymentSettlementError(
-      "Paystack amount does not match the expected payment amount.",
-    );
-  }
-}
-
-function validatePaystackCurrency(
-  payment: SerializedPayment,
-  paystackCurrency: string,
-): void {
-  if (
-    normalizePaystackCurrency(paystackCurrency) !==
-    normalizePaystackCurrency(payment.currency)
-  ) {
-    throw new PaymentSettlementError(
-      "Paystack currency does not match the expected payment currency.",
-    );
-  }
 }
 
 async function runContributionAutomation(
@@ -181,7 +115,8 @@ export async function settlePaymentFromPaystackReference(
     verification = await paystackVerifyTransaction(trimmedReference);
   } catch (error) {
     if (error instanceof PaystackRequestError) {
-      throw new PaymentSettlementError(error.message);
+      // Transient verify/API failures must remain retryable for webhook delivery.
+      throw new PaymentSettlementError(error.message, { retryable: true });
     }
     throw error;
   }

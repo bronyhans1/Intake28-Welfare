@@ -1,4 +1,4 @@
-import { listContributions } from "@/lib/contributions/repository";
+import { listAllMatchingContributions } from "@/lib/contributions/repository";
 import { getDefaulters } from "@/lib/finance/defaulters";
 import { listWelfareHistory } from "@/lib/welfare/history";
 import type { ContributionListQuery } from "@/lib/validators/contributions";
@@ -12,22 +12,7 @@ const EXPORT_PAGE_SIZE = 100;
 export async function fetchAllContributionsForReport(
   filters: Omit<ContributionListQuery, "page" | "pageSize">,
 ): Promise<SerializedContribution[]> {
-  const records: SerializedContribution[] = [];
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages) {
-    const result = await listContributions({
-      ...filters,
-      page,
-      pageSize: EXPORT_PAGE_SIZE,
-    });
-    records.push(...result.records);
-    totalPages = result.totalPages;
-    page += 1;
-  }
-
-  return records;
+  return listAllMatchingContributions(filters, EXPORT_PAGE_SIZE);
 }
 
 export async function fetchAllWelfareHistoryForReport(
