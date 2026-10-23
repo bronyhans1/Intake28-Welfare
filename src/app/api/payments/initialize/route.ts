@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserFromSession } from "@/lib/auth/session";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
+import {
+  isPaymentsEnabled,
+  PAYMENTS_UNAVAILABLE_MESSAGE,
+  PaymentsUnavailableError,
+} from "@/lib/payments/availability";
 import { initializePayment } from "@/lib/payments/repository";
 import { initializePaymentSchema } from "@/lib/validators/payments";
 
@@ -15,6 +20,13 @@ export async function POST(request: Request) {
 
   if (!isFirebaseAdminConfigured()) {
     return NextResponse.json({ error: "Service unavailable" }, { status: 503 });
+  }
+
+  if (!isPaymentsEnabled()) {
+    return NextResponse.json(
+      { error: PAYMENTS_UNAVAILABLE_MESSAGE },
+      { status: 503 },
+    );
   }
 
   let body: unknown;
@@ -36,6 +48,9 @@ export async function POST(request: Request) {
     const result = await initializePayment(parsed.data, actor);
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    if (error instanceof PaymentsUnavailableError) {
+      return NextResponse.json({ error: error.message }, { status: 503 });
+    }
     const message =
       error instanceof Error ? error.message : "Failed to initialize payment.";
     return NextResponse.json({ error: message }, { status: 400 });

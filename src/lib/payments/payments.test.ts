@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import {
   formatAuditActionLabel,
   formatAuditDescription,
 } from "@/lib/audit/labels";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
+import {
+  PAYMENTS_UNAVAILABLE_MESSAGE,
+  PaymentsUnavailableError,
+} from "@/lib/payments/availability";
 import {
   generatePaymentReference,
   isPaymentReference,
@@ -202,6 +206,7 @@ describe("payment permissions", () => {
 describe("payments repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubEnv("PAYMENTS_ENABLED", "true");
     mockEnsureContributionFromPayment.mockResolvedValue({
       outcome: "created",
       contribution: null,
@@ -237,6 +242,10 @@ describe("payments repository", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("creates pending payments", async () => {
@@ -425,6 +434,101 @@ describe("payments repository", () => {
 
     expect(mockPaystackInitialize).not.toHaveBeenCalled();
     expect(mockSet).not.toHaveBeenCalled();
+  });
+
+  it("rejects initialization when payments are suspended and creates no records", async () => {
+    vi.stubEnv("PAYMENTS_ENABLED", "false");
+
+    await expect(
+      initializePayment(
+        {
+          memberId: "member-1",
+          amount: 50,
+          paymentType: PaymentType.MONTHLY_DUES,
+          selectedMonths: [{ month: 6, year: 2026 }],
+        },
+        memberActor,
+      ),
+    ).rejects.toBeInstanceOf(PaymentsUnavailableError);
+
+    await expect(
+      initializePayment(
+        {
+          memberId: "member-1",
+          amount: 100,
+          paymentType: PaymentType.SPECIAL_CONTRIBUTION,
+        },
+        memberActor,
+      ),
+    ).rejects.toThrow(PAYMENTS_UNAVAILABLE_MESSAGE);
+
+    expect(mockPaystackInitialize).not.toHaveBeenCalled();
+    expect(mockSet).not.toHaveBeenCalled();
+    expect(mockCreateAuditLog).not.toHaveBeenCalled();
+    expect(mockGetMemberById).not.toHaveBeenCalled();
+  });
+
+  it("allows initialization again when payments are re-enabled", async () => {
+    vi.stubEnv("PAYMENTS_ENABLED", "false");
+    await expect(
+      initializePayment(
+        {
+          memberId: "member-1",
+          amount: 50,
+          paymentType: PaymentType.MONTHLY_DUES,
+          selectedMonths: [{ month: 6, year: 2026 }],
+        },
+        memberActor,
+      ),
+    ).rejects.toBeInstanceOf(PaymentsUnavailableError);
+
+    vi.stubEnv("PAYMENTS_ENABLED", "true");
+    mockGet.mockResolvedValue({
+      exists: true,
+      id: "payment-1",
+      data: () => makePaymentDoc("payment-1").data(),
+    });
+
+    const result = await initializePayment(
+      {
+        memberId: "member-1",
+        amount: 50,
+        paymentType: PaymentType.MONTHLY_DUES,
+        selectedMonths: [{ month: 6, year: 2026 }],
+      },
+      memberActor,
+    );
+
+    expect(result.authorizationUrl).toContain("paystack");
+    expect(mockPaystackInitialize).toHaveBeenCalled();
+  });
+
+  it("still verifies existing payments while initiation is suspended", async () => {
+    vi.stubEnv("PAYMENTS_ENABLED", "false");
+    let status = PaymentStatus.PENDING;
+    mockGet.mockImplementation(() =>
+      Promise.resolve({
+        docs: [
+          makePaymentDoc("payment-1", {
+            status,
+            providerReference:
+              status === PaymentStatus.SUCCESS ? "GIS-20260617-AB1234" : null,
+            paidAt:
+              status === PaymentStatus.SUCCESS
+                ? makeTimestamp("2026-06-17T11:00:00.000Z")
+                : null,
+          }),
+        ],
+      }),
+    );
+    mockUpdate.mockImplementation(async () => {
+      status = PaymentStatus.SUCCESS;
+    });
+
+    const verified = await verifyPayment("GIS-20260617-AB1234", memberActor);
+
+    expect(verified.status).toBe(PaymentStatus.SUCCESS);
+    expect(mockPaystackInitialize).not.toHaveBeenCalled();
   });
 
   it("verifies pending payment server-side and updates status", async () => {

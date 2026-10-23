@@ -33,6 +33,7 @@ import { getMemberById } from "@/lib/members/repository";
 import { getSystemSettings } from "@/lib/system-settings/repository";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
 import { env } from "@/config/env";
+import { assertPaymentsEnabled } from "@/lib/payments/availability";
 import { resolveInitializePaymentAmount } from "@/lib/payments/resolve-amount";
 import { formatMonthYearLabel, getCurrentMonthYear } from "@/lib/finance/period";
 import {
@@ -384,6 +385,8 @@ export async function initializePayment(
   input: InitializePaymentInput,
   actor: CurrentUser,
 ): Promise<InitializePaymentResult> {
+  assertPaymentsEnabled();
+
   if (!canInitializePayments(actor.role)) {
     throw new Error("You do not have permission to initialize payments.");
   }

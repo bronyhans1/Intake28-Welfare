@@ -15,6 +15,7 @@ import {
 } from "@/lib/contributions/repository";
 import { getMemberOutstandingContributions } from "@/lib/contributions/outstanding-months";
 import { getCurrentMonthYear } from "@/lib/finance/period";
+import { isPaymentsEnabled } from "@/lib/payments/availability";
 import { getProgressionByMemberId } from "@/lib/progression/repository";
 import { getSystemSettings } from "@/lib/system-settings/repository";
 import { ContributionStatus, MembershipProgressionStatus } from "@/types/enums";
@@ -77,6 +78,7 @@ export default async function MemberContributionsPage() {
           monthlyDuesAmount={outstanding.monthlyDuesAmount}
           arrears={outstanding.arrears}
           current={outstanding.current}
+          paymentsEnabled={isPaymentsEnabled()}
           progression={{
             membershipStart: outstanding.membershipStart,
             asOf,

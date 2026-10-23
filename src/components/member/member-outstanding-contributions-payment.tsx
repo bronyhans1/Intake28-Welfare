@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
+import { PAYMENTS_UNAVAILABLE_MESSAGE } from "@/lib/payments/availability";
 import { formatCurrency } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 import {
@@ -42,6 +43,8 @@ interface MemberOutstandingContributionsPaymentProps {
   arrears: OutstandingMonthItem[];
   current: OutstandingMonthItem | null;
   progression: ProgressionSnapshot;
+  /** Server-evaluated; must not be inferred from client env alone. */
+  paymentsEnabled: boolean;
 }
 
 function periodKey(item: { month: number; year: number }): string {
@@ -62,6 +65,7 @@ export function MemberOutstandingContributionsPayment({
   arrears,
   current,
   progression,
+  paymentsEnabled,
 }: MemberOutstandingContributionsPaymentProps) {
   const allOutstanding = useMemo(
     () => [...arrears, ...(current ? [current] : [])],
@@ -229,6 +233,32 @@ export function MemberOutstandingContributionsPayment({
   const multiMonthToggleLabel = current
     ? "Pay multiple months or arrears"
     : "Pay outstanding months";
+
+  if (!paymentsEnabled) {
+    return (
+      <div className="mb-6 space-y-4">
+        <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">
+                Monthly Welfare Contributions
+              </h2>
+              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+                {PAYMENTS_UNAVAILABLE_MESSAGE}
+              </p>
+            </div>
+            <Link
+              href="/payments"
+              className={cn(buttonVariants({ variant: "outline", size: "sm" }))}
+            >
+              <History className="size-4" />
+              Payment History
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="mb-6 space-y-4">
