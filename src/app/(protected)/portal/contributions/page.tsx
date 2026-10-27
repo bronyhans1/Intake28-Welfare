@@ -79,6 +79,7 @@ export default async function MemberContributionsPage() {
           arrears={outstanding.arrears}
           current={outstanding.current}
           paymentsEnabled={isPaymentsEnabled()}
+          serviceNumber={actor.serviceNumber}
           progression={{
             membershipStart: outstanding.membershipStart,
             asOf,

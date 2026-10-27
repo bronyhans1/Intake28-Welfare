@@ -14,9 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ManualMomoPaymentPanel } from "@/components/member/manual-momo-payment-panel";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
-import { PAYMENTS_UNAVAILABLE_MESSAGE } from "@/lib/payments/availability";
 import { formatCurrency } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 import {
@@ -45,6 +45,8 @@ interface MemberOutstandingContributionsPaymentProps {
   progression: ProgressionSnapshot;
   /** Server-evaluated; must not be inferred from client env alone. */
   paymentsEnabled: boolean;
+  /** Shown as the MoMo payment reference while manual mode is active. */
+  serviceNumber?: string | null;
 }
 
 function periodKey(item: { month: number; year: number }): string {
@@ -66,6 +68,7 @@ export function MemberOutstandingContributionsPayment({
   current,
   progression,
   paymentsEnabled,
+  serviceNumber,
 }: MemberOutstandingContributionsPaymentProps) {
   const allOutstanding = useMemo(
     () => [...arrears, ...(current ? [current] : [])],
@@ -235,6 +238,10 @@ export function MemberOutstandingContributionsPayment({
     : "Pay outstanding months";
 
   if (!paymentsEnabled) {
+    const arrearsTotal = arrears.reduce((sum, item) => sum + item.amount, 0);
+    const outstandingTotal =
+      arrearsTotal + (current ? current.amount : 0);
+
     return (
       <div className="mb-6 space-y-4">
         <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm sm:p-5">
@@ -243,8 +250,10 @@ export function MemberOutstandingContributionsPayment({
               <h2 className="text-lg font-semibold text-foreground">
                 Monthly Welfare Contributions
               </h2>
-              <p className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-                {PAYMENTS_UNAVAILABLE_MESSAGE}
+              <p className="mt-1 text-sm text-muted-foreground">
+                Your outstanding balance is shown below. Pay via Mobile Money
+                using the details provided — do not use online checkout while
+                this temporary arrangement is active.
               </p>
             </div>
             <Link
@@ -254,6 +263,75 @@ export function MemberOutstandingContributionsPayment({
               <History className="size-4" />
               Payment History
             </Link>
+          </div>
+
+          {allOutstanding.length === 0 ? (
+            <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+              You have no outstanding monthly dues. All contribution months from
+              your join date through the current month are paid.
+            </p>
+          ) : (
+            <div className="mt-5 space-y-5">
+              {current ? (
+                <section className="rounded-xl border border-[#166534]/20 bg-[#166534]/[0.03] p-4 sm:p-5">
+                  <p className="text-xs font-semibold tracking-wide text-[#166534] uppercase">
+                    Monthly Welfare Contribution
+                  </p>
+                  <p className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+                    {current.label}
+                  </p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Your regular monthly welfare contribution
+                  </p>
+                  <p className="mt-3 text-xl font-semibold text-[#166534] sm:text-2xl">
+                    {formatCurrency(current.amount)}
+                  </p>
+                  <div className="mt-3">
+                    <PaymentDueBadge />
+                  </div>
+                </section>
+              ) : null}
+
+              {hasArrears ? (
+                <section className="space-y-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Previous Unpaid Months
+                    </h3>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      {arrears.length === 1
+                        ? "1 outstanding month"
+                        : `${arrears.length} outstanding months`}
+                      {" · "}
+                      {formatCurrency(arrearsTotal)}
+                    </p>
+                  </div>
+                  <ul className="space-y-2">
+                    {arrears.map((item) => (
+                      <li
+                        key={periodKey(item)}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.08] bg-white px-3 py-3 text-sm"
+                      >
+                        <span className="font-medium text-foreground">
+                          {item.label}
+                        </span>
+                        <span className="font-medium text-foreground">
+                          {formatCurrency(item.amount)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+
+              <p className="text-sm font-semibold text-foreground">
+                Total outstanding {formatCurrency(outstandingTotal)}
+              </p>
+            </div>
+          )}
+
+          <div className="mt-5">
+            <ManualMomoPaymentPanel serviceNumber={serviceNumber} />
           </div>
         </div>
       </div>

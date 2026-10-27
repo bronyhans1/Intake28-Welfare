@@ -19,6 +19,8 @@ vi.mock("@/lib/payments/repository", () => ({
   initializePayment: (...args: unknown[]) => mockInitializePayment(...args),
 }));
 
+import { POST } from "./route";
+
 describe("POST /api/payments/initialize", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -44,7 +46,6 @@ describe("POST /api/payments/initialize", () => {
 
   it("returns 503 and does not initialize when payments are disabled", async () => {
     vi.stubEnv("PAYMENTS_ENABLED", "false");
-    const { POST } = await import("./route");
 
     const response = await POST(
       new Request("http://localhost/api/payments/initialize", {
@@ -66,8 +67,6 @@ describe("POST /api/payments/initialize", () => {
   });
 
   it("initializes when payments are enabled", async () => {
-    const { POST } = await import("./route");
-
     const response = await POST(
       new Request("http://localhost/api/payments/initialize", {
         method: "POST",
