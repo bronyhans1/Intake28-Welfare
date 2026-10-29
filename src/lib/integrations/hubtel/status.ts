@@ -148,6 +148,8 @@ const AMOUNT_FIELD_ALIASES = [
   "Amount",
   "totalAmount",
   "TotalAmount",
+  /** Confirmed RMSC Public Transaction Status Check field (major units). */
+  "TransactionAmount",
 ] as const;
 
 type StatusRecordNestingLevel =
@@ -210,6 +212,10 @@ function buildMissingAmountDiagnostics(input: {
     hasPascalTotalAmount: Object.prototype.hasOwnProperty.call(
       record,
       "TotalAmount",
+    ),
+    hasTransactionAmount: Object.prototype.hasOwnProperty.call(
+      record,
+      "TransactionAmount",
     ),
     firstPresentAmountAlias: firstPresentAlias,
     resolvedAmountKind,
@@ -336,8 +342,14 @@ function parseStatusPayload(
       "Id",
     ]) ?? clientReference;
 
+  // Prefer legacy aliases first; then confirmed RMSC TransactionAmount.
+  // Do not use AmountAfterFees or Fee — those are not the member checkout total.
   const amount = parseAmount(
-    record.amount ?? record.Amount ?? record.totalAmount ?? record.TotalAmount,
+    record.amount ??
+      record.Amount ??
+      record.totalAmount ??
+      record.TotalAmount ??
+      record.TransactionAmount,
   );
 
   if (amount == null) {
@@ -357,7 +369,7 @@ function parseStatusPayload(
     clientReference,
     providerReference,
     amount,
-    currency: pickString(record, ["currency", "Currency"]),
+    currency: pickString(record, ["currency", "Currency", "CurrencyCode"]),
     paidAt: parsePaidAt(
       record.date ??
         record.Date ??

@@ -176,6 +176,104 @@ describe("hubtelFetchTransactionStatus", () => {
     expect(result.lifecycleStatus).toBe("Unpaid");
   });
 
+  it("parses RMSC TransactionAmount with CurrencyCode, ClientReference, and TransactionStatus", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: [
+              {
+                TransactionStatus: "Paid",
+                TransactionAmount: "50.00",
+                CurrencyCode: "GHS",
+                ClientReference: "GIS-20261029-LJYSRH",
+                AmountAfterFees: "49.02",
+                Fee: "0.98",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261029-LJYSRH",
+      testConfig,
+    );
+
+    expect(result.status).toBe(PaymentStatus.SUCCESS);
+    expect(result.lifecycleStatus).toBe("Paid");
+    expect(result.amount).toBe(50);
+    expect(result.currency).toBe("GHS");
+    expect(result.clientReference).toBe("GIS-20261029-LJYSRH");
+    expect(missingAmountLogCalls(errorSpy)).toHaveLength(0);
+    // Fee fields must not replace TransactionAmount.
+    expect(() =>
+      validateHubtelAmount(
+        { amount: 50, checkoutAmount: 50 },
+        { amount: result.amount },
+      ),
+    ).not.toThrow();
+  });
+
+  it("fails closed when TransactionAmount is missing, non-numeric, or non-finite", async () => {
+    const cases: Array<{ label: string; TransactionAmount?: unknown; omit?: boolean }> =
+      [
+        { label: "missing", omit: true },
+        { label: "object", TransactionAmount: { value: 50 } },
+        { label: "NaN string", TransactionAmount: "not-a-number" },
+        { label: "non-finite", TransactionAmount: Number.POSITIVE_INFINITY },
+      ];
+
+    for (const testCase of cases) {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const record: Record<string, unknown> = {
+        TransactionStatus: "Paid",
+        CurrencyCode: "GHS",
+        ClientReference: "GIS-20261029-LJYSRH",
+      };
+      if (!testCase.omit) {
+        record.TransactionAmount = testCase.TransactionAmount;
+      }
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn().mockResolvedValue(
+          mockJsonResponse({
+            ok: true,
+            status: 200,
+            body: { ResponseCode: "0000", Data: [record] },
+          }),
+        ),
+      );
+
+      const result = await hubtelFetchTransactionStatus(
+        "GIS-20261029-LJYSRH",
+        testConfig,
+      );
+
+      expect(result.status, testCase.label).toBe(PaymentStatus.SUCCESS);
+      expect(result.amount, testCase.label).toBeNull();
+      expect(missingAmountLogCalls(errorSpy).length, testCase.label).toBeGreaterThan(
+        0,
+      );
+      expect(() =>
+        validateHubtelAmount(
+          { amount: 50, checkoutAmount: 50 },
+          { amount: result.amount },
+        ),
+      ).toThrow(/missing a transaction amount/i);
+
+      errorSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("parses PascalCase Amount inside Data and yields amount 50", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
@@ -239,6 +337,7 @@ describe("hubtelFetchTransactionStatus", () => {
       hasPascalAmount: false,
       hasTotalAmount: false,
       hasPascalTotalAmount: false,
+      hasTransactionAmount: false,
       firstPresentAmountAlias: null,
       resolvedAmountKind: null,
       envelopeHasAmount: false,
