@@ -464,11 +464,11 @@ describe("recovery UI boundaries", () => {
     expect(overview.indexOf("<RecoverUnsettledPaymentButton")).toBeGreaterThan(
       paystackUnsettledIndex,
     );
-    expect(overview.slice(paystackSurplusIndex, paystackLimitationsIndex)).not.toContain(
+    expect(overview.slice(paystackSurplusIndex, hubtelSurplusIndex > paystackSurplusIndex ? hubtelSurplusIndex : overview.length)).not.toContain(
       "RecoverUnsettledPaymentButton",
     );
-    expect(overview.slice(hubtelSurplusIndex, hubtelLimitationsIndex)).not.toContain(
-      "RecoverUnsettledPaymentButton",
+    expect(overview.slice(hubtelSurplusIndex)).not.toMatch(
+      /Potential Surplus Or Duplicate Hubtel Charges[\s\S]*?RecoverUnsettledPaymentButton/,
     );
     expect(overview.slice(paystackLimitationsIndex, hubtelLimitationsIndex)).not.toContain(
       "RecoverUnsettledPaymentButton",

@@ -20,6 +20,7 @@ import {
 import { PaystackBatchNavigation } from "@/components/admin/paystack-batch-navigation";
 import { ProviderBatchNavigation } from "@/components/admin/provider-batch-navigation";
 import { RecoverUnsettledPaymentButton } from "@/components/admin/recover-unsettled-payment-button";
+import { ReconciliationDetailSection } from "@/components/admin/reconciliation-detail-section";
 import {
   reconciliationStatusMessage,
   type ReconciliationSummary,
@@ -112,7 +113,10 @@ export function ReconciliationOverview({
       </Card>
 
       {summary.paymentsMissingContributions.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Payments Missing Contributions</CardTitle>
           </CardHeader>
@@ -140,7 +144,10 @@ export function ReconciliationOverview({
       ) : null}
 
       {summary.contributionsMissingReceipts.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Contributions Missing Receipts</CardTitle>
           </CardHeader>
@@ -168,7 +175,10 @@ export function ReconciliationOverview({
       ) : null}
 
       {summary.receiptsMissingPayments.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Receipts Missing Payments</CardTitle>
           </CardHeader>
@@ -195,73 +205,11 @@ export function ReconciliationOverview({
         </Card>
       ) : null}
 
-      {summary.paystackCandidateWindow.candidateCount > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Paystack Verification Batch</CardTitle>
-            <CardDescription>
-              Batch {summary.paystackCandidateWindow.batch} of{" "}
-              {summary.paystackCandidateWindow.batchCount}. Eligible payments{" "}
-              {summary.paystackCandidateWindow.rangeStart}–
-              {summary.paystackCandidateWindow.rangeEnd} of{" "}
-              {summary.paystackCandidateWindow.candidateCount}, oldest first.
-              {summary.paystackCandidateWindow.uncheckedCount > 0
-                ? ` ${summary.paystackCandidateWindow.uncheckedCount} eligible payments were not sent to Paystack in this batch.`
-                : " Every current eligible payment is in this batch."}{" "}
-              Reloading repeats this batch. Use the next or previous batch to
-              inspect the others. New or settled payments can shift which
-              references fall in each batch.
-              {summary.paystackCandidateWindow.requestedBatchAdjusted
-                ? " The requested batch was not valid for the current list, so this batch is shown instead."
-                : ""}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <PaystackBatchNavigation
-              batch={summary.paystackCandidateWindow.batch}
-              hasPrevious={summary.paystackCandidateWindow.hasPrevious}
-              hasNext={summary.paystackCandidateWindow.hasNext}
-              companionHubtelBatch={summary.hubtelCandidateWindow.batch}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {summary.hubtelCandidateWindow.candidateCount > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Hubtel Verification Batch</CardTitle>
-            <CardDescription>
-              Batch {summary.hubtelCandidateWindow.batch} of{" "}
-              {summary.hubtelCandidateWindow.batchCount}. Eligible Hubtel payments{" "}
-              {summary.hubtelCandidateWindow.rangeStart}–
-              {summary.hubtelCandidateWindow.rangeEnd} of{" "}
-              {summary.hubtelCandidateWindow.candidateCount}, oldest first.
-              {summary.hubtelCandidateWindow.uncheckedCount > 0
-                ? ` ${summary.hubtelCandidateWindow.uncheckedCount} eligible Hubtel payments were not sent to Hubtel in this batch.`
-                : " Every current eligible Hubtel payment is in this batch."}{" "}
-              Reloading repeats this batch. Use the next or previous Hubtel batch to
-              inspect the others. New or settled payments can shift which
-              references fall in each batch.
-              {summary.hubtelCandidateWindow.requestedBatchAdjusted
-                ? " The requested batch was not valid for the current list, so this batch is shown instead."
-                : ""}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ProviderBatchNavigation
-              provider="hubtel"
-              batch={summary.hubtelCandidateWindow.batch}
-              hasPrevious={summary.hubtelCandidateWindow.hasPrevious}
-              hasNext={summary.hubtelCandidateWindow.hasNext}
-              companionBatch={summary.paystackCandidateWindow.batch}
-            />
-          </CardContent>
-        </Card>
-      ) : null}
-
       {summary.unsettledPaystackPayments.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Unsettled Paystack Successes</CardTitle>
             <CardDescription>
@@ -318,7 +266,10 @@ export function ReconciliationOverview({
       ) : null}
 
       {summary.unsettledHubtelPayments.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Unsettled Hubtel Successes</CardTitle>
             <CardDescription>
@@ -378,8 +329,95 @@ export function ReconciliationOverview({
         </Card>
       ) : null}
 
+      {summary.paystackSettlementMismatches.count > 0 ? (
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
+          <CardHeader>
+            <CardTitle>Paystack Amount Or Currency Differences</CardTitle>
+            <CardDescription>
+              Paystack reported success, but the amount, currency, or reference
+              does not match settlement rules. These are confirmed differences,
+              not unverified payments. Do not run settlement until they are
+              reviewed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Paystack Status</TableHead>
+                  <TableHead>Expected Amount</TableHead>
+                  <TableHead>Difference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.paystackSettlementMismatches.records.map((finding) => (
+                  <TableRow key={`${finding.reference}-${finding.issue}`}>
+                    <TableCell>{finding.reference}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.paystackStatus]}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
+                    <TableCell>{finding.issue}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {summary.hubtelSettlementMismatches.count > 0 ? (
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
+          <CardHeader>
+            <CardTitle>Hubtel Amount Or Currency Differences</CardTitle>
+            <CardDescription>
+              Hubtel reported success, but the checkout amount, currency, or
+              reference does not match settlement rules. These are confirmed
+              differences, not unverified payments. Do not run settlement until
+              they are reviewed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Hubtel Status</TableHead>
+                  <TableHead>Contribution</TableHead>
+                  <TableHead>Expected Checkout</TableHead>
+                  <TableHead>Difference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.hubtelSettlementMismatches.records.map((finding) => (
+                  <TableRow key={`${finding.reference}-${finding.issue}`}>
+                    <TableCell>{finding.reference}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.hubtelStatus]}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedCheckoutAmount)}</TableCell>
+                    <TableCell>{finding.issue}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {summary.paystackSurplusDuplicatePayments.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Potential Surplus Or Duplicate Paystack Charges</CardTitle>
             <CardDescription>
@@ -423,7 +461,10 @@ export function ReconciliationOverview({
       ) : null}
 
       {summary.hubtelSurplusDuplicatePayments.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+        <Card
+          className="rounded-2xl border border-black/[0.08] bg-white shadow-sm"
+          data-reconciliation-priority="actionable"
+        >
           <CardHeader>
             <CardTitle>Potential Surplus Or Duplicate Hubtel Charges</CardTitle>
             <CardDescription>
@@ -468,161 +509,129 @@ export function ReconciliationOverview({
         </Card>
       ) : null}
 
-      {summary.paystackSettlementMismatches.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Paystack Amount Or Currency Differences</CardTitle>
-            <CardDescription>
-              Paystack reported success, but the amount, currency, or reference
-              does not match settlement rules. These are confirmed differences,
-              not unverified payments. Do not run settlement until they are
-              reviewed.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Reference</TableHead>
-                  <TableHead>Portal Status</TableHead>
-                  <TableHead>Paystack Status</TableHead>
-                  <TableHead>Expected Amount</TableHead>
-                  <TableHead>Difference</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.paystackSettlementMismatches.records.map((finding) => (
-                  <TableRow key={`${finding.reference}-${finding.issue}`}>
-                    <TableCell>{finding.reference}</TableCell>
-                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
-                    <TableCell>{PAYMENT_STATUS_LABELS[finding.paystackStatus]}</TableCell>
-                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
-                    <TableCell>{finding.issue}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+      {summary.paystackCandidateWindow.candidateCount > 0 ? (
+        <ReconciliationDetailSection
+          sectionId="paystack-batch"
+          title={`Paystack Verification Batch — ${summary.paystackCandidateWindow.candidateCount} eligible`}
+          description={`Batch ${summary.paystackCandidateWindow.batch} of ${summary.paystackCandidateWindow.batchCount}. Eligible pending or abandoned Paystack payments ${summary.paystackCandidateWindow.rangeStart}–${summary.paystackCandidateWindow.rangeEnd} of ${summary.paystackCandidateWindow.candidateCount}, oldest first. Expand to navigate batches. Confirmed unsettled successes appear above when verified.`}
+          recordCount={summary.paystackCandidateWindow.candidateCount}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {summary.paystackCandidateWindow.uncheckedCount > 0
+                ? `${summary.paystackCandidateWindow.uncheckedCount} eligible payments were not sent to Paystack in this batch.`
+                : "Every current eligible payment is in this batch."}{" "}
+              Reloading repeats this batch. New or settled payments can shift which
+              references fall in each batch.
+              {summary.paystackCandidateWindow.requestedBatchAdjusted
+                ? " The requested batch was not valid for the current list, so this batch is shown instead."
+                : ""}
+            </p>
+            <PaystackBatchNavigation
+              batch={summary.paystackCandidateWindow.batch}
+              hasPrevious={summary.paystackCandidateWindow.hasPrevious}
+              hasNext={summary.paystackCandidateWindow.hasNext}
+              companionHubtelBatch={summary.hubtelCandidateWindow.batch}
+            />
+          </div>
+        </ReconciliationDetailSection>
       ) : null}
 
-      {summary.hubtelSettlementMismatches.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Hubtel Amount Or Currency Differences</CardTitle>
-            <CardDescription>
-              Hubtel reported success, but the checkout amount, currency, or
-              reference does not match settlement rules. These are confirmed
-              differences, not unverified payments. Do not run settlement until
-              they are reviewed.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Reference</TableHead>
-                  <TableHead>Portal Status</TableHead>
-                  <TableHead>Hubtel Status</TableHead>
-                  <TableHead>Contribution</TableHead>
-                  <TableHead>Expected Checkout</TableHead>
-                  <TableHead>Difference</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.hubtelSettlementMismatches.records.map((finding) => (
-                  <TableRow key={`${finding.reference}-${finding.issue}`}>
-                    <TableCell>{finding.reference}</TableCell>
-                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
-                    <TableCell>{PAYMENT_STATUS_LABELS[finding.hubtelStatus]}</TableCell>
-                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
-                    <TableCell>{formatCurrency(finding.expectedCheckoutAmount)}</TableCell>
-                    <TableCell>{finding.issue}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+      {summary.hubtelCandidateWindow.candidateCount > 0 ? (
+        <ReconciliationDetailSection
+          sectionId="hubtel-batch"
+          title={`Hubtel Verification Batch — ${summary.hubtelCandidateWindow.candidateCount} eligible`}
+          description={`Batch ${summary.hubtelCandidateWindow.batch} of ${summary.hubtelCandidateWindow.batchCount}. Eligible pending or abandoned Hubtel payments ${summary.hubtelCandidateWindow.rangeStart}–${summary.hubtelCandidateWindow.rangeEnd} of ${summary.hubtelCandidateWindow.candidateCount}, oldest first. Expand to navigate batches. Abandoned checkout attempts stay reviewable here without dominating the page.`}
+          recordCount={summary.hubtelCandidateWindow.candidateCount}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {summary.hubtelCandidateWindow.uncheckedCount > 0
+                ? `${summary.hubtelCandidateWindow.uncheckedCount} eligible Hubtel payments were not sent to Hubtel in this batch.`
+                : "Every current eligible Hubtel payment is in this batch."}{" "}
+              Reloading repeats this batch. New or settled payments can shift which
+              references fall in each batch.
+              {summary.hubtelCandidateWindow.requestedBatchAdjusted
+                ? " The requested batch was not valid for the current list, so this batch is shown instead."
+                : ""}
+            </p>
+            <ProviderBatchNavigation
+              provider="hubtel"
+              batch={summary.hubtelCandidateWindow.batch}
+              hasPrevious={summary.hubtelCandidateWindow.hasPrevious}
+              hasNext={summary.hubtelCandidateWindow.hasNext}
+              companionBatch={summary.paystackCandidateWindow.batch}
+            />
+          </div>
+        </ReconciliationDetailSection>
       ) : null}
 
       {summary.paystackVerificationLimitations.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Paystack Verification Not Completed</CardTitle>
-            <CardDescription>
-              These records could not be verified. They are not confirmed
-              mismatches and are not treated as failed payments.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Reference</TableHead>
-                  <TableHead>Portal Status</TableHead>
-                  <TableHead>Limitation</TableHead>
+        <ReconciliationDetailSection
+          sectionId="paystack-limitations"
+          title={`Paystack Verification Not Completed — ${summary.paystackVerificationLimitations.count} records`}
+          description="These transactions could not be verified with Paystack. Their final payment outcome is unknown. They are not confirmed mismatches and are not treated as failed payments."
+          recordCount={summary.paystackVerificationLimitations.count}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reference</TableHead>
+                <TableHead>Portal Status</TableHead>
+                <TableHead>Limitation</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {summary.paystackVerificationLimitations.records.map((finding, index) => (
+                <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
+                  <TableCell>{finding.reference ?? "—"}</TableCell>
+                  <TableCell>
+                    {finding.portalStatus
+                      ? PAYMENT_STATUS_LABELS[finding.portalStatus]
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="max-w-xl whitespace-normal break-words">
+                    {finding.message}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.paystackVerificationLimitations.records.map((finding, index) => (
-                  <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
-                    <TableCell>{finding.reference ?? "—"}</TableCell>
-                    <TableCell>
-                      {finding.portalStatus
-                        ? PAYMENT_STATUS_LABELS[finding.portalStatus]
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-xl whitespace-normal break-words">
-                      {finding.message}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+              ))}
+            </TableBody>
+          </Table>
+        </ReconciliationDetailSection>
       ) : null}
 
       {summary.hubtelVerificationLimitations.count > 0 ? (
-        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
-          <CardHeader>
-            <CardTitle>Hubtel Verification Not Completed</CardTitle>
-            <CardDescription>
-              These records could not be verified with Hubtel. Their final
-              payment outcome is unknown. No-record responses mean Hubtel has no
-              matching transaction—they are not confirmed mismatches, failed
-              payments, or proof that a member was not charged. Use Check status
-              or ?hubtelRecheck=1 for a fresh lookup.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Reference</TableHead>
-                  <TableHead>Portal Status</TableHead>
-                  <TableHead>Limitation</TableHead>
+        <ReconciliationDetailSection
+          sectionId="hubtel-limitations"
+          title={`Hubtel Verification Not Completed — ${summary.hubtelVerificationLimitations.count} records`}
+          description="These transactions could not be verified with Hubtel. Their final payment outcome is unknown. No-record responses mean Hubtel has no matching transaction—they are not confirmed mismatches, failed payments, or proof that a member was not charged. Use Check status or ?hubtelRecheck=1 for a fresh lookup."
+          recordCount={summary.hubtelVerificationLimitations.count}
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Reference</TableHead>
+                <TableHead>Portal Status</TableHead>
+                <TableHead>Limitation</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {summary.hubtelVerificationLimitations.records.map((finding, index) => (
+                <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
+                  <TableCell>{finding.reference ?? "—"}</TableCell>
+                  <TableCell>
+                    {finding.portalStatus
+                      ? PAYMENT_STATUS_LABELS[finding.portalStatus]
+                      : "—"}
+                  </TableCell>
+                  <TableCell className="max-w-xl whitespace-normal break-words">
+                    {finding.message}
+                  </TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {summary.hubtelVerificationLimitations.records.map((finding, index) => (
-                  <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
-                    <TableCell>{finding.reference ?? "—"}</TableCell>
-                    <TableCell>
-                      {finding.portalStatus
-                        ? PAYMENT_STATUS_LABELS[finding.portalStatus]
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-xl whitespace-normal break-words">
-                      {finding.message}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+              ))}
+            </TableBody>
+          </Table>
+        </ReconciliationDetailSection>
       ) : null}
 
       <p className="text-sm text-muted-foreground">

@@ -48,7 +48,7 @@ export default async function AdminReconciliationPage({
   return (
     <AdminPageShell
       title="Financial Reconciliation"
-      description="Detect gaps between successful payments, automated contributions, issued receipts, and Paystack or Hubtel charges that are still unsettled."
+      description="Review confirmed payment, contribution, and receipt discrepancies. Provider verification details are available when needed."
     >
       <ReconciliationOverview
         summary={summary}

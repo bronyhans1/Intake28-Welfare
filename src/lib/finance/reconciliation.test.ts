@@ -1484,7 +1484,7 @@ describe("reconciliation server/client boundary", () => {
     expect(pageSource).toContain('redirect("/admin/dashboard")');
     expect(pageSource).toContain("hubtelBatch");
     expect(pageSource).toContain("hubtelRecheck");
-    expect(pageSource).toContain("Paystack or Hubtel");
+    expect(pageSource).toContain("confirmed payment, contribution, and receipt discrepancies");
     expect(serverSource).not.toContain("settlePaymentFromPaystackReference");
     expect(serverSource).not.toContain("abandonStalePendingPayments");
     expect(serverSource).not.toContain(".update(");
