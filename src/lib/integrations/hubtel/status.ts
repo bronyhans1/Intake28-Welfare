@@ -143,16 +143,82 @@ function resolveEnvelopeData(payload: Record<string, unknown>): unknown {
   return undefined;
 }
 
+const AMOUNT_FIELD_ALIASES = [
+  "amount",
+  "Amount",
+  "totalAmount",
+  "TotalAmount",
+] as const;
+
+type StatusRecordNestingLevel =
+  | "envelope_data_array_element0"
+  | "envelope_data_object"
+  | "unavailable";
+
 /**
  * Hubtel status envelopes may use `data` or `Data`. Nested shape follows the
  * existing contract: a non-empty array (first object) or a single object.
  */
-function extractStatusRecord(payload: Record<string, unknown>): Record<string, unknown> | null {
+function extractStatusRecord(payload: Record<string, unknown>): {
+  record: Record<string, unknown> | null;
+  nestingLevel: StatusRecordNestingLevel;
+} {
   const data = resolveEnvelopeData(payload);
   if (Array.isArray(data) && data.length > 0) {
-    return asRecord(data[0]);
+    return {
+      record: asRecord(data[0]),
+      nestingLevel: "envelope_data_array_element0",
+    };
   }
-  return asRecord(data);
+  if (data !== null && typeof data === "object" && !Array.isArray(data)) {
+    return {
+      record: asRecord(data),
+      nestingLevel: "envelope_data_object",
+    };
+  }
+  return { record: asRecord(data), nestingLevel: "unavailable" };
+}
+
+/**
+ * Safe metadata when a transaction record was found but amount aliases resolve
+ * to null. Never logs amount values or response bodies.
+ */
+function buildMissingAmountDiagnostics(input: {
+  envelope: Record<string, unknown>;
+  record: Record<string, unknown>;
+  nestingLevel: StatusRecordNestingLevel;
+}): Record<string, unknown> {
+  const { envelope, record, nestingLevel } = input;
+
+  let firstPresentAlias: string | null = null;
+  let resolvedAmountKind: string | null = null;
+  for (const key of AMOUNT_FIELD_ALIASES) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      firstPresentAlias = key;
+      resolvedAmountKind = jsonValueKind(record[key]);
+      break;
+    }
+  }
+
+  return {
+    topLevelKeys: Object.keys(envelope).sort(),
+    nestingLevel,
+    recordKeys: Object.keys(record).sort(),
+    hasAmount: Object.prototype.hasOwnProperty.call(record, "amount"),
+    hasPascalAmount: Object.prototype.hasOwnProperty.call(record, "Amount"),
+    hasTotalAmount: Object.prototype.hasOwnProperty.call(record, "totalAmount"),
+    hasPascalTotalAmount: Object.prototype.hasOwnProperty.call(
+      record,
+      "TotalAmount",
+    ),
+    firstPresentAmountAlias: firstPresentAlias,
+    resolvedAmountKind,
+    envelopeHasAmount: Object.prototype.hasOwnProperty.call(envelope, "amount"),
+    envelopeHasPascalAmount: Object.prototype.hasOwnProperty.call(
+      envelope,
+      "Amount",
+    ),
+  };
 }
 
 function jsonValueKind(value: unknown): string {
@@ -241,7 +307,7 @@ function parseStatusPayload(
   payload: Record<string, unknown>,
   requestedReference: string,
 ): HubtelVerifiedTransaction {
-  const record = extractStatusRecord(payload);
+  const { record, nestingLevel } = extractStatusRecord(payload);
   if (!record) {
     throw new HubtelStatusRequestError("Hubtel status response is missing data.", {
       retryable: false,
@@ -270,14 +336,27 @@ function parseStatusPayload(
       "Id",
     ]) ?? clientReference;
 
+  const amount = parseAmount(
+    record.amount ?? record.Amount ?? record.totalAmount ?? record.TotalAmount,
+  );
+
+  if (amount == null) {
+    console.error(
+      "[hubtel:status] missing amount",
+      buildMissingAmountDiagnostics({
+        envelope: payload,
+        record,
+        nestingLevel,
+      }),
+    );
+  }
+
   return {
     status: paymentStatus,
     lifecycleStatus,
     clientReference,
     providerReference,
-    amount: parseAmount(
-      record.amount ?? record.Amount ?? record.totalAmount ?? record.TotalAmount,
-    ),
+    amount,
     currency: pickString(record, ["currency", "Currency"]),
     paidAt: parsePaidAt(
       record.date ??

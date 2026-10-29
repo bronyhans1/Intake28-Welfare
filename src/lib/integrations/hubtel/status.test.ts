@@ -3,6 +3,7 @@ import {
   hubtelFetchTransactionStatus,
   mapHubtelLifecycleStatus,
 } from "@/lib/integrations/hubtel/status";
+import { validateHubtelAmount } from "@/lib/payments/hubtel-settlement-rules";
 import { PaymentStatus } from "@/types/enums";
 
 const testConfig = {
@@ -36,6 +37,14 @@ function missingDataLogCalls(
 ): unknown[][] {
   return errorSpy.mock.calls.filter(
     (call) => call[0] === "[hubtel:status] missing data",
+  );
+}
+
+function missingAmountLogCalls(
+  errorSpy: ReturnType<typeof vi.spyOn>,
+): unknown[][] {
+  return errorSpy.mock.calls.filter(
+    (call) => call[0] === "[hubtel:status] missing amount",
   );
 }
 
@@ -165,6 +174,119 @@ describe("hubtelFetchTransactionStatus", () => {
 
     expect(result.status).toBe(PaymentStatus.PENDING);
     expect(result.lifecycleStatus).toBe("Unpaid");
+  });
+
+  it("parses PascalCase Amount inside Data and yields amount 50", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: [
+              {
+                Status: "Paid",
+                Amount: "50.00",
+                ClientReference: "GIS-20261029-LJYSRH",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261029-LJYSRH",
+      testConfig,
+    );
+
+    expect(result.status).toBe(PaymentStatus.SUCCESS);
+    expect(result.amount).toBe(50);
+    expect(missingAmountLogCalls(errorSpy)).toHaveLength(0);
+  });
+
+  it("maps Paid without amount aliases to null amount and fails settlement validation", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: [{ Status: "Paid" }],
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261029-LJYSRH",
+      testConfig,
+    );
+
+    expect(result.status).toBe(PaymentStatus.SUCCESS);
+    expect(result.amount).toBeNull();
+    expect(missingAmountLogCalls(errorSpy)).toHaveLength(1);
+    expect(missingAmountLogCalls(errorSpy)[0]?.[1]).toMatchObject({
+      nestingLevel: "envelope_data_array_element0",
+      recordKeys: ["Status"],
+      hasAmount: false,
+      hasPascalAmount: false,
+      hasTotalAmount: false,
+      hasPascalTotalAmount: false,
+      firstPresentAmountAlias: null,
+      resolvedAmountKind: null,
+      envelopeHasAmount: false,
+      envelopeHasPascalAmount: false,
+      topLevelKeys: ["Data", "ResponseCode"],
+    });
+    expect(JSON.stringify(missingAmountLogCalls(errorSpy)[0])).not.toMatch(
+      /50|Basic |api[_-]?key|secret|responseBody/i,
+    );
+
+    expect(() =>
+      validateHubtelAmount(
+        { amount: 50, checkoutAmount: 50 },
+        { amount: result.amount },
+      ),
+    ).toThrow(/missing a transaction amount/i);
+  });
+
+  it("does not use envelope-level Amount when the Data record lacks amount aliases", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: [{ Status: "Paid" }],
+            Amount: 50,
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261029-LJYSRH",
+      testConfig,
+    );
+
+    // Documents current contract: amount is read only from the nested record.
+    expect(result.status).toBe(PaymentStatus.SUCCESS);
+    expect(result.amount).toBeNull();
+    expect(missingAmountLogCalls(errorSpy)[0]?.[1]).toMatchObject({
+      envelopeHasPascalAmount: true,
+      hasPascalAmount: false,
+      resolvedAmountKind: null,
+    });
   });
 
   it("still rejects ResponseCode alone without Data/data", async () => {
