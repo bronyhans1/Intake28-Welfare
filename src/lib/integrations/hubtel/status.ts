@@ -129,8 +129,26 @@ export function mapHubtelLifecycleStatus(
   return { lifecycleStatus: "Unknown", paymentStatus: PaymentStatus.PENDING };
 }
 
+/**
+ * Resolve Hubtel status envelope payload. Prefer explicit `data` (even when
+ * null) over `Data` so nullish coalescing does not hide a present null field.
+ */
+function resolveEnvelopeData(payload: Record<string, unknown>): unknown {
+  if (Object.prototype.hasOwnProperty.call(payload, "data")) {
+    return payload.data;
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, "Data")) {
+    return payload.Data;
+  }
+  return undefined;
+}
+
+/**
+ * Hubtel status envelopes may use `data` or `Data`. Nested shape follows the
+ * existing contract: a non-empty array (first object) or a single object.
+ */
 function extractStatusRecord(payload: Record<string, unknown>): Record<string, unknown> | null {
-  const data = payload.data;
+  const data = resolveEnvelopeData(payload);
   if (Array.isArray(data) && data.length > 0) {
     return asRecord(data[0]);
   }
@@ -187,12 +205,22 @@ function buildMissingDataDiagnostics(input: {
   }
 
   const payload = parsed as Record<string, unknown>;
-  const data = payload.data;
-  const hasResponseCode = Object.prototype.hasOwnProperty.call(
+  const data = resolveEnvelopeData(payload);
+  const hasResponseCode =
+    Object.prototype.hasOwnProperty.call(payload, "responseCode") ||
+    Object.prototype.hasOwnProperty.call(payload, "ResponseCode");
+  const responseCodeValue = Object.prototype.hasOwnProperty.call(
     payload,
     "responseCode",
-  );
-  const hasMessage = Object.prototype.hasOwnProperty.call(payload, "message");
+  )
+    ? payload.responseCode
+    : payload.ResponseCode;
+  const hasMessage =
+    Object.prototype.hasOwnProperty.call(payload, "message") ||
+    Object.prototype.hasOwnProperty.call(payload, "Message");
+  const messageValue = Object.prototype.hasOwnProperty.call(payload, "message")
+    ? payload.message
+    : payload.Message;
 
   return {
     httpStatus,
@@ -203,9 +231,9 @@ function buildMissingDataDiagnostics(input: {
     dataIsNull: data === null,
     dataArrayLength: Array.isArray(data) ? data.length : null,
     hasResponseCode,
-    responseCodeType: hasResponseCode ? jsonValueKind(payload.responseCode) : null,
+    responseCodeType: hasResponseCode ? jsonValueKind(responseCodeValue) : null,
     hasMessage,
-    messageType: hasMessage ? jsonValueKind(payload.message) : null,
+    messageType: hasMessage ? jsonValueKind(messageValue) : null,
   };
 }
 

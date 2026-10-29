@@ -99,6 +99,102 @@ describe("hubtelFetchTransactionStatus", () => {
     expect(missingDataLogCalls(errorSpy)).toHaveLength(0);
   });
 
+  it("parses production PascalCase Data/ResponseCode envelope without inventing Paid", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Nested record shape matches the existing lowercase fixtures (non-empty array
+    // of transaction objects). Only the top-level envelope casing differs.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: [
+              {
+                status: "Paid",
+                clientReference: "GIS-20261029-LJYSRH",
+                transactionId: "txn_pascal_1",
+                amount: "50.00",
+                currency: "GHS",
+                date: "2026-10-29T05:00:00.000Z",
+              },
+            ],
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261029-LJYSRH",
+      testConfig,
+    );
+
+    expect(result.status).toBe(PaymentStatus.SUCCESS);
+    expect(result.lifecycleStatus).toBe("Paid");
+    expect(result.amount).toBe(50);
+    expect(result.currency).toBe("GHS");
+    expect(result.providerReference).toBe("txn_pascal_1");
+    expect(result.clientReference).toBe("GIS-20261029-LJYSRH");
+    expect(missingDataLogCalls(errorSpy)).toHaveLength(0);
+  });
+
+  it("parses PascalCase Data when it is a single object (same nested contract as lowercase)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: {
+            ResponseCode: "0000",
+            Data: {
+              Status: "Unpaid",
+              ClientReference: "GIS-20261027-AB12CD",
+            },
+          },
+        }),
+      ),
+    );
+
+    const result = await hubtelFetchTransactionStatus(
+      "GIS-20261027-AB12CD",
+      testConfig,
+    );
+
+    expect(result.status).toBe(PaymentStatus.PENDING);
+    expect(result.lifecycleStatus).toBe("Unpaid");
+  });
+
+  it("still rejects ResponseCode alone without Data/data", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: true,
+          status: 200,
+          body: { ResponseCode: "0000" },
+        }),
+      ),
+    );
+
+    await expect(
+      hubtelFetchTransactionStatus("GIS-20261029-LJYSRH", testConfig),
+    ).rejects.toMatchObject({
+      message: "Hubtel status response is missing data.",
+      retryable: false,
+    });
+
+    expect(missingDataLogCalls(errorSpy)[0]?.[1]).toMatchObject({
+      topLevelKeys: ["ResponseCode"],
+      dataType: "undefined",
+      hasResponseCode: true,
+      responseCodeType: "string",
+    });
+  });
+
   it("treats missing data as a permanent status parse failure", async () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal(
