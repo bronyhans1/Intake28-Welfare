@@ -28,11 +28,24 @@ import {
   ContributionSource,
   ContributionType,
   PaymentCategory,
+  PaymentProvider,
   PaymentStatus,
 } from "@/types/enums";
 import type { CurrentUser } from "@/types/auth";
 import type { SerializedContribution } from "@/types/contribution";
 import type { SerializedPayment } from "@/types/payment";
+
+function resolveAutomatedContributionSource(
+  payment: Pick<SerializedPayment, "provider">,
+): ContributionSource {
+  if (payment.provider === PaymentProvider.HUBTEL) {
+    return ContributionSource.HUBTEL;
+  }
+  if (payment.provider === PaymentProvider.PAYSTACK) {
+    return ContributionSource.PAYSTACK;
+  }
+  return ContributionSource.PAYSTACK;
+}
 
 export type PaymentContributionOutcome =
   | "created"
@@ -160,7 +173,7 @@ export async function ensureContributionFromPayment(
       amount: payment.amount,
       month,
       year,
-      source: ContributionSource.PAYSTACK,
+      source: resolveAutomatedContributionSource(payment),
       paymentReference: payment.reference,
       paymentId: payment.id,
     });
@@ -254,7 +267,7 @@ export async function ensureContributionFromPayment(
         amount: unitAmount,
         month: period.month,
         year: period.year,
-        source: ContributionSource.PAYSTACK,
+        source: resolveAutomatedContributionSource(payment),
         paymentReference: payment.reference,
         paymentId: payment.id,
         remarks: `Paid ${formatMonthYearLabel(period)} contribution.`,

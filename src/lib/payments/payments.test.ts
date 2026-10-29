@@ -34,7 +34,7 @@ import {
 const mockCreateAuditLog = vi.fn();
 const mockGetMemberById = vi.fn();
 const mockGetSystemSettings = vi.fn();
-const mockPaystackInitialize = vi.fn();
+const mockHubtelInitialize = vi.fn();
 const mockPaystackVerify = vi.fn();
 const mockCollection = vi.fn();
 const mockDoc = vi.fn();
@@ -42,6 +42,7 @@ const mockGet = vi.fn();
 const mockSet = vi.fn();
 const mockUpdate = vi.fn();
 const mockOrderBy = vi.fn();
+const mockRunTransaction = vi.fn();
 
 vi.mock("@/lib/audit/repository", () => ({
   createAuditLog: (...args: unknown[]) => mockCreateAuditLog(...args),
@@ -55,8 +56,12 @@ vi.mock("@/lib/system-settings/repository", () => ({
   getSystemSettings: () => mockGetSystemSettings(),
 }));
 
+vi.mock("@/lib/integrations/hubtel/checkout", () => ({
+  HUBTEL_CLIENT_REFERENCE_MAX_LENGTH: 32,
+  hubtelInitiateCheckout: (...args: unknown[]) => mockHubtelInitialize(...args),
+}));
+
 vi.mock("@/lib/integrations/paystack/client", () => ({
-  paystackInitializeTransaction: (...args: unknown[]) => mockPaystackInitialize(...args),
   paystackVerifyTransaction: (...args: unknown[]) => mockPaystackVerify(...args),
   mapPaystackStatus: (status: string) => {
     if (status === "success") return "success";
@@ -125,6 +130,7 @@ vi.mock("@/config/env", () => ({
 vi.mock("@/lib/firebase/admin", () => ({
   getAdminDb: () => ({
     collection: (...args: unknown[]) => mockCollection(...args),
+    runTransaction: (...args: unknown[]) => mockRunTransaction(...args),
   }),
 }));
 
@@ -218,6 +224,33 @@ describe("payments repository", () => {
       where: vi.fn().mockReturnValue({ get: mockGet }),
     });
     mockDoc.mockReturnValue({ id: "payment-1", set: mockSet, get: mockGet, update: mockUpdate });
+    mockRunTransaction.mockImplementation(async (fn: (tx: {
+      get: (ref: unknown) => Promise<unknown>;
+      update: (ref: unknown, data: unknown) => Promise<unknown>;
+    }) => Promise<unknown>) => {
+      const transaction = {
+        get: async () => {
+          const result = await mockGet();
+          if (
+            result &&
+            typeof result === "object" &&
+            "docs" in result &&
+            Array.isArray((result as { docs: unknown[] }).docs)
+          ) {
+            const doc = (result as { docs: Array<{ id: string; data: () => Record<string, unknown> }> })
+              .docs[0];
+            return {
+              exists: Boolean(doc),
+              id: doc?.id ?? "payment-1",
+              data: () => doc?.data() ?? {},
+            };
+          }
+          return result;
+        },
+        update: async (_ref: unknown, data: unknown) => mockUpdate(data),
+      };
+      return fn(transaction);
+    });
     mockOrderBy.mockReturnValue({ get: mockGet });
     mockGet.mockReset();
     mockGet.mockResolvedValue({ docs: [], exists: false });
@@ -232,8 +265,10 @@ describe("payments repository", () => {
       currency: "GHS",
       monthlyDuesAmount: 50,
     });
-    mockPaystackInitialize.mockResolvedValue({
-      authorizationUrl: "https://checkout.paystack.com/test",
+    mockHubtelInitialize.mockResolvedValue({
+      checkoutUrl: "https://pay.hubtel.com/checkout/test",
+      clientReference: "GIS-20260617-AB1234",
+      checkoutId: "chk_test",
     });
     mockPaystackVerify.mockResolvedValue({
       status: PaymentStatus.SUCCESS,
@@ -291,18 +326,40 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(result.authorizationUrl).toContain("paystack");
-    expect(mockPaystackInitialize).toHaveBeenCalledWith(
+    expect(result.authorizationUrl).toContain("hubtel");
+    expect(mockHubtelInitialize).toHaveBeenCalledWith(
       expect.objectContaining({
-        amount: 50,
+        totalAmount: 50,
+        description: expect.stringContaining("Monthly dues"),
+        clientReference: expect.stringMatching(/^GIS-\d{8}-[A-Z0-9]{6}$/),
         callbackUrl: expect.stringContaining("/api/payments/callback?reference="),
+        returnUrl: expect.stringContaining("/payments?reference="),
+        cancellationUrl: expect.stringContaining("/portal/contributions"),
       }),
     );
+    expect(mockHubtelInitialize.mock.calls[0][0]).not.toHaveProperty(
+      "merchantAccountNumber",
+    );
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: PaymentProvider.HUBTEL,
+        status: PaymentStatus.PENDING,
+        amount: 50,
+        checkoutAmount: 50,
+        processingFeeAmount: 0,
+      }),
+    );
+    expect(mockEnsureContributionFromPayment).not.toHaveBeenCalled();
     expect(mockCreateAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
         action: PaymentAuditAction.PAYMENT_INITIALIZED,
         entityType: "payment",
-        metadata: expect.objectContaining({ amount: 50 }),
+        metadata: expect.objectContaining({
+          amount: 50,
+          checkoutAmount: 50,
+          processingFeeAmount: 0,
+          provider: PaymentProvider.HUBTEL,
+        }),
       }),
     );
   });
@@ -324,12 +381,13 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(mockPaystackInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 50 }),
+    expect(mockHubtelInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 50 }),
     );
     expect(mockSet).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 50,
+        provider: PaymentProvider.HUBTEL,
       }),
     );
   });
@@ -351,8 +409,8 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(mockPaystackInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 50 }),
+    expect(mockHubtelInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 50 }),
     );
   });
 
@@ -372,8 +430,8 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(mockPaystackInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 50 }),
+    expect(mockHubtelInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 50 }),
     );
   });
 
@@ -396,8 +454,8 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(mockPaystackInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 100 }),
+    expect(mockHubtelInitialize).toHaveBeenCalledWith(
+      expect.objectContaining({ totalAmount: 100 }),
     );
   });
 
@@ -432,7 +490,7 @@ describe("payments repository", () => {
       ),
     ).rejects.toThrow("Your monthly dues for June 2026 have already been paid.");
 
-    expect(mockPaystackInitialize).not.toHaveBeenCalled();
+    expect(mockHubtelInitialize).not.toHaveBeenCalled();
     expect(mockSet).not.toHaveBeenCalled();
   });
 
@@ -462,7 +520,7 @@ describe("payments repository", () => {
       ),
     ).rejects.toThrow(PAYMENTS_UNAVAILABLE_MESSAGE);
 
-    expect(mockPaystackInitialize).not.toHaveBeenCalled();
+    expect(mockHubtelInitialize).not.toHaveBeenCalled();
     expect(mockSet).not.toHaveBeenCalled();
     expect(mockCreateAuditLog).not.toHaveBeenCalled();
     expect(mockGetMemberById).not.toHaveBeenCalled();
@@ -499,8 +557,8 @@ describe("payments repository", () => {
       memberActor,
     );
 
-    expect(result.authorizationUrl).toContain("paystack");
-    expect(mockPaystackInitialize).toHaveBeenCalled();
+    expect(result.authorizationUrl).toContain("hubtel");
+    expect(mockHubtelInitialize).toHaveBeenCalled();
   });
 
   it("still verifies existing payments while initiation is suspended", async () => {
@@ -528,7 +586,7 @@ describe("payments repository", () => {
     const verified = await verifyPayment("GIS-20260617-AB1234", memberActor);
 
     expect(verified.status).toBe(PaymentStatus.SUCCESS);
-    expect(mockPaystackInitialize).not.toHaveBeenCalled();
+    expect(mockHubtelInitialize).not.toHaveBeenCalled();
   });
 
   it("verifies pending payment server-side and updates status", async () => {

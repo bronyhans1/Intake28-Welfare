@@ -13,6 +13,9 @@ const serverEnvSchema = z.object({
   ),
   PAYSTACK_SECRET_KEY: optionalEnvString,
   PAYMENT_EMAIL_DOMAIN: optionalEnvString,
+  HUBTEL_PAYMENT_API_ID: optionalEnvString,
+  HUBTEL_PAYMENT_API_KEY: optionalEnvString,
+  HUBTEL_COLLECTION_ACCOUNT_NUMBER: optionalEnvString,
 });
 
 const clientEnvSchema = z.object({
@@ -48,6 +51,10 @@ function getServerEnv(): ServerEnv {
     ACTIVATION_SESSION_SECRET: process.env.ACTIVATION_SESSION_SECRET,
     PAYSTACK_SECRET_KEY: process.env.PAYSTACK_SECRET_KEY,
     PAYMENT_EMAIL_DOMAIN: process.env.PAYMENT_EMAIL_DOMAIN,
+    HUBTEL_PAYMENT_API_ID: process.env.HUBTEL_PAYMENT_API_ID,
+    HUBTEL_PAYMENT_API_KEY: process.env.HUBTEL_PAYMENT_API_KEY,
+    HUBTEL_COLLECTION_ACCOUNT_NUMBER:
+      process.env.HUBTEL_COLLECTION_ACCOUNT_NUMBER,
   });
 }
 

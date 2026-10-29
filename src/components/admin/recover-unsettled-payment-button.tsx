@@ -88,7 +88,7 @@ export function RecoverUnsettledPaymentButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Recover unsettled payment?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will verify the Paystack charge again on the server and, if
+              This recovers a historical Paystack charge by verifying it again on the server and, if
               eligible, record the payment, contribution, and receipt through the
               existing settlement process. It does not refund or reverse funds.
             </AlertDialogDescription>

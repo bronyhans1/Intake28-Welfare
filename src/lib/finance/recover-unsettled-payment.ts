@@ -11,7 +11,7 @@ import { PaymentAuditAction } from "@/lib/payments/audit";
 import { getPaymentByReference } from "@/lib/payments/repository";
 import {
   PaymentSettlementError,
-  settlePaymentFromPaystackReference,
+  settlePaymentByReference,
 } from "@/lib/payments/settlement";
 import { getReceiptByPaymentReference } from "@/lib/receipts/repository";
 import { PaymentStatus, PaymentType } from "@/types/enums";
@@ -207,7 +207,7 @@ export async function recoverUnsettledPaystackPayment(
 
   if (payment.status === PaymentStatus.SUCCESS) {
     try {
-      const settled = await settlePaymentFromPaystackReference(trimmed, {
+      const settled = await settlePaymentByReference(trimmed, {
         actor,
         source: "recovery",
       });
@@ -244,7 +244,7 @@ export async function recoverUnsettledPaystackPayment(
   }
 
   try {
-    const settled = await settlePaymentFromPaystackReference(trimmed, {
+    const settled = await settlePaymentByReference(trimmed, {
       actor,
       source: "recovery",
     });

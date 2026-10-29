@@ -15,14 +15,17 @@ import { PaymentAuditAction } from "@/lib/payments/audit";
 import { ensureContributionFromPayment } from "@/lib/payments/contribution-automation";
 import { abandonStalePendingPayments } from "@/lib/payments/lifecycle";
 import {
+  claimPaymentSuccessTransition,
   getPaymentByReference,
   updatePaymentStatus,
 } from "@/lib/payments/repository";
-import { PaymentStatus, UserRole } from "@/types/enums";
+import { PaymentProvider, PaymentStatus, UserRole } from "@/types/enums";
 import type { CurrentUser } from "@/types/auth";
 import type { SerializedPayment } from "@/types/payment";
+import { settlePaymentFromHubtelReference } from "@/lib/payments/hubtel-settlement";
 
 export { PaymentSettlementError } from "@/lib/payments/paystack-settlement-rules";
+export { settlePaymentFromHubtelReference } from "@/lib/payments/hubtel-settlement";
 
 export type PaymentSettlementSource = "verify" | "callback" | "webhook" | "recovery";
 
@@ -94,6 +97,18 @@ export async function settlePaymentFromPaystackReference(
     throw new PaymentSettlementError("Payment not found.");
   }
 
+  if (payment.provider === PaymentProvider.HUBTEL) {
+    throw new PaymentSettlementError(
+      "Hubtel payment references must not be verified through Paystack.",
+    );
+  }
+
+  if (payment.provider !== PaymentProvider.PAYSTACK) {
+    throw new PaymentSettlementError(
+      "Payment provider is not Paystack; refusing Paystack settlement path.",
+    );
+  }
+
   if (payment.status === PaymentStatus.SUCCESS) {
     logSettlement("already_settled", {
       reference: trimmedReference,
@@ -149,11 +164,25 @@ export async function settlePaymentFromPaystackReference(
   validatePaystackBusinessAmount(payment, verification);
   validatePaystackCurrency(payment, verification.currency);
 
-  const updated = await updatePaymentStatus(trimmedReference, {
-    status: PaymentStatus.SUCCESS,
+  const claim = await claimPaymentSuccessTransition(trimmedReference, {
     providerReference: verification.providerReference,
     paidAt: verification.paidAt,
   });
+
+  if (claim.outcome === "already_settled") {
+    logSettlement("already_settled", {
+      reference: trimmedReference,
+      source,
+      outcome: "already_settled",
+      note: "lost_success_claim_race",
+    });
+    await runContributionAutomation(claim.payment, actor);
+    return {
+      outcome: "already_settled",
+      payment: claim.payment,
+      message: "Payment was already settled.",
+    };
+  }
 
   await createAuditLog({
     action: PaymentAuditAction.PAYMENT_VERIFIED,
@@ -178,7 +207,7 @@ export async function settlePaymentFromPaystackReference(
     },
   });
 
-  await runContributionAutomation(updated, actor);
+  await runContributionAutomation(claim.payment, actor);
 
   logSettlement("settled", {
     reference: trimmedReference,
@@ -189,7 +218,40 @@ export async function settlePaymentFromPaystackReference(
 
   return {
     outcome: "settled",
-    payment: updated,
+    payment: claim.payment,
     message: "Payment settled successfully.",
   };
+}
+
+/**
+ * Provider-routed settlement. Hubtel refs never call Paystack verify.
+ */
+export async function settlePaymentByReference(
+  reference: string,
+  options: {
+    actor?: CurrentUser;
+    source?: PaymentSettlementSource;
+  } = {},
+): Promise<PaymentSettlementResult> {
+  const trimmedReference = reference.trim();
+  if (!trimmedReference) {
+    throw new PaymentSettlementError("Payment reference is required.");
+  }
+
+  const payment = await getPaymentByReference(trimmedReference);
+  if (!payment) {
+    throw new PaymentSettlementError("Payment not found.");
+  }
+
+  if (payment.provider === PaymentProvider.HUBTEL) {
+    return settlePaymentFromHubtelReference(trimmedReference, options);
+  }
+
+  if (payment.provider === PaymentProvider.PAYSTACK) {
+    return settlePaymentFromPaystackReference(trimmedReference, options);
+  }
+
+  throw new PaymentSettlementError(
+    "Online settlement is not supported for this payment provider.",
+  );
 }

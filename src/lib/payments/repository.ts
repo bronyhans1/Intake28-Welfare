@@ -6,19 +6,17 @@ import { getAdminDb } from "@/lib/firebase/admin";
 import { sanitizeFirestoreData, warnInvalidFirestorePayload } from "@/lib/firestore/sanitize";
 import { serializeFirestoreDoc } from "@/lib/firestore/serialize";
 import { PaymentAuditAction } from "@/lib/payments/audit";
-import {
-  deriveMemberPaymentEmailAddress,
-  isPaystackCompatibleEmail,
-} from "@/lib/payments/member-email";
+import { deriveMemberPaymentEmailAddress } from "@/lib/payments/member-email";
 import { resolvePaymentCategory } from "@/lib/payments/payment-category";
 import { generatePaymentReference } from "@/lib/payments/reference";
 import {
-  paystackInitializeTransaction,
-} from "@/lib/integrations/paystack/client";
+  HUBTEL_CLIENT_REFERENCE_MAX_LENGTH,
+  hubtelInitiateCheckout,
+} from "@/lib/integrations/hubtel/checkout";
 import { abandonStalePendingPayments } from "@/lib/payments/lifecycle";
 import {
   PaymentSettlementError,
-  settlePaymentFromPaystackReference,
+  settlePaymentByReference,
 } from "@/lib/payments/settlement";
 import {
   assertMonthlyDuesPaymentAllowed,
@@ -34,6 +32,7 @@ import { getSystemSettings } from "@/lib/system-settings/repository";
 import { hasPermission, Permission } from "@/lib/auth/permissions";
 import { env } from "@/config/env";
 import { assertPaymentsEnabled } from "@/lib/payments/availability";
+import { resolveCheckoutAmountBreakdown } from "@/lib/payments/checkout-amount";
 import { resolveInitializePaymentAmount } from "@/lib/payments/resolve-amount";
 import { formatMonthYearLabel, getCurrentMonthYear } from "@/lib/finance/period";
 import {
@@ -272,6 +271,130 @@ export async function updatePaymentStatus(
   return updated;
 }
 
+export type ClaimPaymentSuccessResult =
+  | { outcome: "claimed"; payment: SerializedPayment }
+  | { outcome: "already_settled"; payment: SerializedPayment };
+
+/**
+ * Atomically claim SUCCESS settlement for a payment.
+ * Only PENDING or ABANDONED (historical recovery) may transition.
+ * Concurrent callers: exactly one receives "claimed"; others "already_settled".
+ */
+export async function claimPaymentSuccessTransition(
+  reference: string,
+  updates: {
+    providerReference?: string | null;
+    paidAt?: Date | null;
+  } = {},
+): Promise<ClaimPaymentSuccessResult> {
+  const existing = await getPaymentByReference(reference);
+  if (!existing) {
+    throw new Error("Payment not found.");
+  }
+
+  const db = getAdminDb();
+  const docRef = db.collection(COLLECTIONS.PAYMENTS).doc(existing.id);
+
+  const claimOutcome = await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(docRef);
+    if (!snapshot.exists) {
+      throw new Error("Payment not found.");
+    }
+
+    const data = snapshot.data() as Record<string, unknown>;
+    const status = String(data.status ?? "");
+
+    if (status === PaymentStatus.SUCCESS) {
+      return "already_settled" as const;
+    }
+
+    if (
+      status !== PaymentStatus.PENDING &&
+      status !== PaymentStatus.ABANDONED
+    ) {
+      throw new Error(
+        `Payment status ${status} cannot be settled as successful.`,
+      );
+    }
+
+    const document = sanitizeFirestoreData({
+      status: PaymentStatus.SUCCESS,
+      providerReference:
+        updates.providerReference ?? (data.providerReference as string | null) ?? null,
+      paidAt:
+        updates.paidAt != null
+          ? Timestamp.fromDate(updates.paidAt)
+          : Timestamp.fromDate(new Date()),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    warnInvalidFirestorePayload("claimPaymentSuccessTransition", document);
+    transaction.update(docRef, document);
+    return "claimed" as const;
+  });
+
+  const payment = await getPaymentByReference(reference);
+  if (!payment) {
+    throw new Error("Payment not found after settlement claim.");
+  }
+
+  return { outcome: claimOutcome, payment };
+}
+
+/**
+ * Atomically mark a PENDING payment FAILED (Hubtel Refunded/Failed).
+ * No-op style: if already SUCCESS, leave SUCCESS untouched.
+ */
+export async function claimPaymentFailedTransition(
+  reference: string,
+  updates: {
+    providerReference?: string | null;
+  } = {},
+): Promise<SerializedPayment> {
+  const existing = await getPaymentByReference(reference);
+  if (!existing) {
+    throw new Error("Payment not found.");
+  }
+
+  const db = getAdminDb();
+  const docRef = db.collection(COLLECTIONS.PAYMENTS).doc(existing.id);
+
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(docRef);
+    if (!snapshot.exists) {
+      throw new Error("Payment not found.");
+    }
+
+    const data = snapshot.data() as Record<string, unknown>;
+    const status = String(data.status ?? "");
+
+    if (status === PaymentStatus.SUCCESS || status === PaymentStatus.FAILED) {
+      return;
+    }
+
+    if (status !== PaymentStatus.PENDING) {
+      return;
+    }
+
+    const document = sanitizeFirestoreData({
+      status: PaymentStatus.FAILED,
+      providerReference:
+        updates.providerReference ?? (data.providerReference as string | null) ?? null,
+      paidAt: null,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    warnInvalidFirestorePayload("claimPaymentFailedTransition", document);
+    transaction.update(docRef, document);
+  });
+
+  const payment = await getPaymentByReference(reference);
+  if (!payment) {
+    throw new Error("Payment not found after failed-status claim.");
+  }
+  return payment;
+}
+
 /**
  * One ordered payments read for a single report.
  * The first document for a reference wins, matching getPaymentByReference.
@@ -442,21 +565,32 @@ export async function initializePayment(
     }
   }
 
-  const amount = resolveInitializePaymentAmount(
+  const officialAmount = resolveInitializePaymentAmount(
     input.paymentType,
     input.amount,
     settings.monthlyDuesAmount,
     selectedMonths.length || 1,
   );
+  const {
+    amount,
+    checkoutAmount,
+    processingFeeAmount,
+  } = resolveCheckoutAmountBreakdown(officialAmount);
   const reference = generatePaymentReference();
-  const email = deriveMemberPaymentEmailAddress(member);
-  if (!isPaystackCompatibleEmail(email)) {
-    throw new Error(
-      `Payment email "${email}" is not compatible with Paystack. Set PAYMENT_EMAIL_DOMAIN to a valid domain.`,
-    );
+  if (reference.length > HUBTEL_CLIENT_REFERENCE_MAX_LENGTH) {
+    throw new Error("Generated payment reference exceeds provider limits.");
   }
 
-  const callbackUrl = `${env.client().NEXT_PUBLIC_APP_URL}/api/payments/callback?reference=${encodeURIComponent(reference)}`;
+  const email = deriveMemberPaymentEmailAddress(member);
+  const appUrl = env.client().NEXT_PUBLIC_APP_URL.replace(/\/$/, "");
+  const callbackUrl = `${appUrl}/api/payments/callback?reference=${encodeURIComponent(reference)}`;
+  const returnUrl = `${appUrl}/payments?reference=${encodeURIComponent(reference)}`;
+  const cancellationUrl = `${appUrl}/portal/contributions?cancelled=1`;
+  const paymentCategory = resolvePaymentCategory(input.paymentType);
+  const description =
+    input.paymentType === PaymentType.MONTHLY_DUES
+      ? `Monthly dues (${selectedMonths.map((period) => formatMonthYearLabel(period)).join(", ")})`
+      : `Welfare payment (${input.paymentType})`;
 
   await createPayment({
     memberId: member.id,
@@ -464,31 +598,69 @@ export async function initializePayment(
     serviceNumber: member.serviceNumber,
     email,
     amount,
+    checkoutAmount,
+    processingFeeAmount,
     currency: settings.currency,
     reference,
     paymentType: input.paymentType,
-    paymentCategory: resolvePaymentCategory(input.paymentType),
-    provider: PaymentProvider.PAYSTACK,
+    paymentCategory,
+    provider: PaymentProvider.HUBTEL,
     providerReference: null,
     status: PaymentStatus.PENDING,
     selectedMonths:
       selectedMonths.length > 0 ? selectedMonths : null,
   });
 
-  const { authorizationUrl } = await paystackInitializeTransaction({
-    email,
-    amount,
-    reference,
-    currency: settings.currency,
-    callbackUrl,
-    metadata: {
-      memberId: member.id,
-      paymentType: input.paymentType,
-      paymentCategory: resolvePaymentCategory(input.paymentType),
-      selectedMonths: selectedMonths.map((period) => formatMonthYearLabel(period)),
-      amount,
-    },
-  });
+  let checkoutUrl: string;
+  try {
+    const initiated = await hubtelInitiateCheckout({
+      totalAmount: checkoutAmount,
+      description,
+      callbackUrl,
+      returnUrl,
+      cancellationUrl,
+      clientReference: reference,
+    });
+    checkoutUrl = initiated.checkoutUrl;
+  } catch (error) {
+    /**
+     * Orphan-PENDING recovery (do not invent failure):
+     * - Leave status PENDING. Hubtel may have accepted checkout despite a client timeout.
+     * - Do not auto-retry initiate for the same reference.
+     * - Member/admin should use Check status / callback verify later.
+     * - Stale unresolved PENDING is abandoned after PAYMENT_ABANDONMENT_HOURS.
+     * - If the member was never charged, finance may record a manual contribution
+     *   after confirmation; do not create a second online payment for the same
+     *   months until outstanding/paid guards allow it.
+     */
+    const message =
+      error instanceof Error ? error.message : "Hubtel checkout initiation failed.";
+    await createAuditLog({
+      action: PaymentAuditAction.PAYMENT_INITIALIZED,
+      entityType: "payment",
+      entityId: reference,
+      ...buildAuditActor(actor),
+      metadata: {
+        memberId: member.id,
+        memberName: member.fullName,
+        serviceNumber: member.serviceNumber,
+        amount,
+        checkoutAmount,
+        processingFeeAmount,
+        currency: settings.currency,
+        paymentType: input.paymentType,
+        paymentCategory,
+        provider: PaymentProvider.HUBTEL,
+        reference,
+        selectedMonths,
+        initiationOutcome: "failed",
+        initiationError: message.slice(0, 240),
+      },
+    });
+    throw new Error(
+      `${message} A pending payment ${reference} was recorded. Check Payment History before trying again — do not assume the charge failed.`,
+    );
+  }
 
   await createAuditLog({
     action: PaymentAuditAction.PAYMENT_INITIALIZED,
@@ -500,15 +672,20 @@ export async function initializePayment(
       memberName: member.fullName,
       serviceNumber: member.serviceNumber,
       amount,
+      checkoutAmount,
+      processingFeeAmount,
       currency: settings.currency,
       paymentType: input.paymentType,
-      paymentCategory: resolvePaymentCategory(input.paymentType),
+      paymentCategory,
+      provider: PaymentProvider.HUBTEL,
       reference,
       selectedMonths,
+      initiationOutcome: "started",
     },
   });
 
-  return { reference, authorizationUrl };
+  // Keep authorizationUrl key for existing member UI redirect contract.
+  return { reference, authorizationUrl: checkoutUrl };
 }
 
 export async function verifyPayment(
@@ -533,7 +710,7 @@ export async function verifyPayment(
   }
 
   try {
-    const result = await settlePaymentFromPaystackReference(reference, {
+    const result = await settlePaymentByReference(reference, {
       actor,
       source: "verify",
     });

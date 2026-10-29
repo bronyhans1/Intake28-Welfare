@@ -14,4 +14,8 @@ describe("contribution source labels", () => {
   it("formats paystack source", () => {
     expect(formatContributionSourceLabel(ContributionSource.PAYSTACK)).toBe("Paystack");
   });
+
+  it("formats hubtel source", () => {
+    expect(formatContributionSourceLabel(ContributionSource.HUBTEL)).toBe("Hubtel");
+  });
 });

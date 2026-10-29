@@ -19,7 +19,21 @@ export interface Payment {
   memberName: string;
   serviceNumber: string;
   email: string;
+  /**
+   * Official welfare contribution / ledger amount.
+   * Contributions and receipts always use this value — never the checkout surcharge.
+   */
   amount: number;
+  /**
+   * Amount submitted to Hubtel Online Checkout and expected from status verification.
+   * When absent (legacy rows), settlement falls back to `amount`.
+   */
+  checkoutAmount?: number | null;
+  /**
+   * checkoutAmount − amount when a surcharge applies.
+   * Never treated as welfare dues. Phase 1 always persists 0 for new Hubtel inits.
+   */
+  processingFeeAmount?: number | null;
   currency: SettingsCurrency;
   reference: string;
   paymentType: PaymentType;

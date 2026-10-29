@@ -1,38 +1,39 @@
 /**
- * Temporary direct Mobile Money contribution instructions.
+ * Legacy Mobile Money account constants.
  *
- * Presentation mode follows the existing Paystack initiation gate:
- * - Online checkout UI when PAYMENTS_ENABLED === "true"
- * - Manual MoMo instructions otherwise (fail-closed / suspension)
+ * Member-facing manual MoMo checkout instructions were removed in Phase 3.
+ * Online member payments use Hubtel Checkout only when enabled and configured.
+ * Finance/admin staff continue to record externally confirmed MoMo (and other)
+ * contributions through `/admin/contributions`.
  *
- * Reverse by setting PAYMENTS_ENABLED=true in the hosting environment.
- * Do not delete Paystack initialize/verify/webhook/recovery code.
+ * Do not re-expose these details on member payment screens without review.
  */
 
-import { isPaymentsEnabled } from "@/lib/payments/availability";
-
-/** Association MoMo receiving account — edit here only. */
 export const MANUAL_MOMO_ACCOUNT = {
   network: "MTN",
   number: "0538815177",
   accountName: "Public Square / Benjamin Samason",
 } as const;
 
+/** @deprecated Member-facing MoMo panel removed; kept for historical test/reference. */
 export const MANUAL_MOMO_SECTION_TITLE = "Pay Directly via Mobile Money" as const;
 
+/** @deprecated Member-facing MoMo panel removed; kept for historical test/reference. */
 export const MANUAL_MOMO_INSTRUCTIONS =
   "Please transfer your contribution to the Mobile Money account shown above. Use your GIS service number as the payment reference so the Finance Team can identify your payment. Your contribution will be recorded manually after the payment has been confirmed." as const;
 
-export type ContributionPaymentMode = "online" | "manual_momo";
+export type ContributionPaymentMode = "online" | "unavailable";
 
 /**
- * Member-facing contribution checkout mode.
- * Online requires an explicit PAYMENTS_ENABLED=true; anything else is manual MoMo.
+ * Member contribution checkout mode.
+ * Online requires PAYMENTS_ENABLED=true; otherwise checkout is unavailable
+ * (no member-facing manual MoMo fallback).
  */
 export function getContributionPaymentMode(): ContributionPaymentMode {
-  return isPaymentsEnabled() ? "online" : "manual_momo";
+  return process.env.PAYMENTS_ENABLED === "true" ? "online" : "unavailable";
 }
 
+/** @deprecated Use getContributionPaymentMode() === "unavailable". */
 export function isManualMomoContributionMode(): boolean {
-  return getContributionPaymentMode() === "manual_momo";
+  return false;
 }

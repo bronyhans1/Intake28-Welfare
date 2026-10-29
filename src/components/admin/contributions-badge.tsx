@@ -47,7 +47,12 @@ export function ContributionSourceBadge({
   source?: ContributionSource | string | null;
 }) {
   const label = formatContributionSourceLabel(source);
-  const resolved = source === "paystack" ? "paystack" : "manual";
+  const resolved =
+    source === "paystack"
+      ? "paystack"
+      : source === "hubtel"
+        ? "hubtel"
+        : "manual";
 
   return (
     <Badge
@@ -56,6 +61,8 @@ export function ContributionSourceBadge({
         "rounded-full",
         resolved === "paystack" &&
           "bg-sky-500/10 text-sky-800 hover:bg-sky-500/15",
+        resolved === "hubtel" &&
+          "bg-[#166534]/10 text-[#166534] hover:bg-[#166534]/15",
         resolved === "manual" &&
           "bg-slate-500/10 text-slate-700 hover:bg-slate-500/15",
       )}
@@ -64,4 +71,3 @@ export function ContributionSourceBadge({
     </Badge>
   );
 }
-

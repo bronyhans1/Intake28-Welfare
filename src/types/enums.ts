@@ -50,6 +50,7 @@ export const CONTRIBUTION_TYPE_LABELS: Record<ContributionType, string> = {
 export const ContributionSource = {
   MANUAL: "manual",
   PAYSTACK: "paystack",
+  HUBTEL: "hubtel",
 } as const;
 
 export type ContributionSource =
@@ -58,6 +59,7 @@ export type ContributionSource =
 export const CONTRIBUTION_SOURCE_LABELS: Record<ContributionSource, string> = {
   [ContributionSource.MANUAL]: "Manual",
   [ContributionSource.PAYSTACK]: "Paystack",
+  [ContributionSource.HUBTEL]: "Hubtel",
 };
 
 export const ContributionStatus = {
@@ -79,6 +81,7 @@ export const CONTRIBUTION_STATUS_LABELS: Record<ContributionStatus, string> = {
 
 export const PaymentProvider = {
   PAYSTACK: "paystack",
+  HUBTEL: "hubtel",
   MANUAL: "manual",
 } as const;
 
@@ -160,6 +163,7 @@ export const PAYMENT_TYPE_LABELS: Record<PaymentType, string> = {
 
 export const PAYMENT_PROVIDER_LABELS: Record<PaymentProvider, string> = {
   [PaymentProvider.PAYSTACK]: "Paystack",
+  [PaymentProvider.HUBTEL]: "Hubtel",
   [PaymentProvider.MANUAL]: "Manual",
 };
 

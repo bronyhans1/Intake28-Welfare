@@ -8,6 +8,7 @@ import { LoadingOverlay } from "@/components/ui/loading-overlay";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { useToast } from "@/components/providers/toast-provider";
 import {
+  PaymentProviderBadge,
   PaymentStatusBadge,
   PaymentTypeBadge,
 } from "@/components/member/payments-badge";
@@ -33,6 +34,12 @@ import {
   formatPaymentStatusFilterLabel,
   formatPaymentTypeFilterLabel,
 } from "@/lib/payments/labels";
+import {
+  canRetryPendingPaymentStatus,
+  memberPaymentPendingExplanation,
+  memberPaymentVerifiedMessage,
+  memberPaymentVerifyStatusMessage,
+} from "@/lib/payments/member-checkout";
 import {
   formatPaymentAmountInput,
   isMonthlyDuesPaymentType,
@@ -74,8 +81,10 @@ export function PaymentVerificationBanner() {
   const router = useRouter();
   const reference = searchParams.get("reference");
   const verified = searchParams.get("verified");
+  const pending = searchParams.get("pending");
   const paymentError = searchParams.get("error");
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<"success" | "pending">("success");
   const [error, setError] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const verifiedReference = useRef<string | null>(null);
@@ -83,19 +92,28 @@ export function PaymentVerificationBanner() {
   const { showSuccess } = useToast();
 
   useEffect(() => {
-    if (verified === "1" && !reference) {
-      setMessage("Payment verified successfully.");
+    if (reference) return;
+    if (verified === "1") {
+      setMessageTone("success");
+      setMessage(memberPaymentVerifiedMessage());
+      return;
     }
-  }, [verified, reference]);
+    if (pending === "1") {
+      setMessageTone("pending");
+      setMessage(memberPaymentPendingExplanation());
+    }
+  }, [verified, pending, reference]);
 
   useEffect(() => {
     if (!paymentError) return;
 
     const messages: Record<string, string> = {
       verification_failed:
-        "We could not verify your payment. Check your payment history or contact support if you were charged.",
-      unavailable: "Payment verification is temporarily unavailable. Please try again later.",
-      missing_reference: "Payment reference was missing. Check your payment history.",
+        "We could not confirm your payment yet. Check your payment history and use Check status on any pending payment. A return from checkout alone does not mean the payment succeeded.",
+      unavailable:
+        "Payment verification is temporarily unavailable. Please try again later.",
+      missing_reference:
+        "Payment reference was missing. Check your payment history.",
     };
 
     setError(messages[paymentError] ?? "Payment verification failed.");
@@ -145,14 +163,23 @@ export function PaymentVerificationBanner() {
         }
 
         verifiedReference.current = reference;
-        if (payload.data?.status === PaymentStatus.SUCCESS) {
-          setMessage("Payment verified successfully.");
-          showSuccess("Payment verified successfully");
-        } else {
-          setMessage(`Payment status: ${payload.data?.status ?? "updated"}.`);
+        const status = payload.data?.status;
+        const statusMessage = memberPaymentVerifyStatusMessage(status);
+        if (status === PaymentStatus.SUCCESS) {
+          setMessageTone("success");
+          setMessage(statusMessage);
+          showSuccess(memberPaymentVerifiedMessage());
+          router.replace("/payments?verified=1");
+          return;
         }
 
-        router.replace("/payments?verified=1");
+        setMessageTone("pending");
+        setMessage(statusMessage);
+        if (status === PaymentStatus.PENDING) {
+          router.replace("/payments?pending=1");
+        } else {
+          router.replace("/payments");
+        }
       } catch (verificationError) {
         verificationInFlight.current = null;
         setError(
@@ -172,14 +199,20 @@ export function PaymentVerificationBanner() {
     <>
       <LoadingOverlay
         open={isVerifying}
-        title="Processing Payment..."
-        message="Please wait while we verify your transaction."
+        title="Checking payment status…"
+        message="Please wait while we confirm your transaction on the server. Returning from checkout alone does not mark a payment as paid."
       />
 
-      {!isVerifying && (reference || verified || message || error) ? (
+      {!isVerifying && (reference || verified || pending || message || error) ? (
         <div className="mb-4">
           {message ? (
-            <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <p
+              className={
+                messageTone === "pending"
+                  ? "rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950"
+                  : "rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+              }
+            >
               {message}
             </p>
           ) : null}
@@ -198,6 +231,10 @@ export function MemberPaymentsTable({ data }: MemberPaymentsTableProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
+  const [checkingReference, setCheckingReference] = useState<string | null>(null);
+  const [checkError, setCheckError] = useState<string | null>(null);
+  const [checkMessage, setCheckMessage] = useState<string | null>(null);
+  const { showSuccess } = useToast();
 
   const urlSearch = searchParams.get("search") ?? "";
   const urlStatus = searchParams.get("status") ?? FILTER_ALL;
@@ -240,8 +277,65 @@ export function MemberPaymentsTable({ data }: MemberPaymentsTableProps) {
     });
   }
 
+  async function handleCheckStatus(reference: string) {
+    if (checkingReference) return;
+    setCheckingReference(reference);
+    setCheckError(null);
+    setCheckMessage(null);
+
+    try {
+      const response = await fetch("/api/payments/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ reference }),
+      });
+      const payload = (await response.json()) as {
+        error?: string;
+        data?: { status: string };
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to check payment status.");
+      }
+
+      const statusMessage = memberPaymentVerifyStatusMessage(payload.data?.status);
+      if (payload.data?.status === PaymentStatus.SUCCESS) {
+        setCheckMessage(statusMessage);
+        showSuccess(memberPaymentVerifiedMessage());
+      } else {
+        setCheckMessage(statusMessage);
+      }
+      router.refresh();
+    } catch (statusError) {
+      setCheckError(
+        statusError instanceof Error
+          ? statusError.message
+          : "Unable to check payment status.",
+      );
+    } finally {
+      setCheckingReference(null);
+    }
+  }
+
   return (
     <div className="space-y-4">
+      <p className="rounded-xl border border-black/[0.08] bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+        Pending payments may take a short time to confirm. Use{" "}
+        <span className="font-medium text-foreground">Check status</span> to
+        re-verify without starting a new payment. Older payment records remain
+        listed with their original references.
+      </p>
+      {checkMessage ? (
+        <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          {checkMessage}
+        </p>
+      ) : null}
+      {checkError ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+          {checkError}
+        </p>
+      ) : null}
       <div className="grid gap-4 md:grid-cols-3">
         <div className="space-y-2 md:col-span-1">
           <Label htmlFor="payment-search">Search</Label>
@@ -313,16 +407,18 @@ export function MemberPaymentsTable({ data }: MemberPaymentsTableProps) {
           <TableHeader>
             <TableRow>
               <TableHead>Reference</TableHead>
+              <TableHead>Provider</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Payment Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Date</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {data.records.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="h-24 text-center text-muted-foreground">
+                <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                   No payments found.
                 </TableCell>
               </TableRow>
@@ -330,6 +426,9 @@ export function MemberPaymentsTable({ data }: MemberPaymentsTableProps) {
               data.records.map((record) => (
                 <TableRow key={record.id}>
                   <TableCell className="font-mono text-xs">{record.reference}</TableCell>
+                  <TableCell>
+                    <PaymentProviderBadge provider={record.provider} />
+                  </TableCell>
                   <TableCell className="font-medium text-[#166534]">
                     {formatCurrency(record.amount)}
                   </TableCell>
@@ -341,6 +440,23 @@ export function MemberPaymentsTable({ data }: MemberPaymentsTableProps) {
                   </TableCell>
                   <TableCell>
                     {formatDisplayDate(record.paidAt ?? record.createdAt)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {canRetryPendingPaymentStatus(record.status) ? (
+                      <LoadingButton
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        loading={checkingReference === record.reference}
+                        loadingText="Checking…"
+                        disabled={Boolean(checkingReference)}
+                        onClick={() => handleCheckStatus(record.reference)}
+                      >
+                        Check status
+                      </LoadingButton>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
                   </TableCell>
                 </TableRow>
               ))
@@ -425,6 +541,7 @@ export function MemberContributionPaymentActions({
     monthlyDuesAlreadyPaid && paymentType === PaymentType.MONTHLY_DUES;
 
   async function handlePayContribution() {
+    if (isSubmitting) return;
     setError(null);
     setIsSubmitting(true);
 
@@ -456,13 +573,15 @@ export function MemberContributionPaymentActions({
       };
 
       if (!response.ok || !responsePayload.data?.authorizationUrl) {
-        throw new Error(responsePayload.error || "Failed to start payment.");
+        throw new Error(responsePayload.error || "Failed to start online payment.");
       }
 
       window.location.href = responsePayload.data.authorizationUrl;
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : "Failed to start payment.",
+        submitError instanceof Error
+          ? submitError.message
+          : "Failed to start online payment.",
       );
       setIsSubmitting(false);
     }
@@ -544,7 +663,7 @@ export function MemberContributionPaymentActions({
             type="button"
             onClick={handlePayContribution}
             loading={isSubmitting}
-            loadingText="Processing…"
+            loadingText="Redirecting to checkout…"
             disabled={monthlyDuesBlocked}
             className="bg-[#166534] text-white hover:bg-[#14532d]"
           >

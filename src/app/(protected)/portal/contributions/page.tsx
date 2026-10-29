@@ -15,7 +15,11 @@ import {
 } from "@/lib/contributions/repository";
 import { getMemberOutstandingContributions } from "@/lib/contributions/outstanding-months";
 import { getCurrentMonthYear } from "@/lib/finance/period";
-import { isPaymentsEnabled } from "@/lib/payments/availability";
+import {
+  areMemberOnlinePaymentsAvailable,
+  getMemberOnlinePaymentsUnavailableMessage,
+  logMemberOnlinePaymentsAvailability,
+} from "@/lib/payments/member-checkout";
 import { getProgressionByMemberId } from "@/lib/progression/repository";
 import { getSystemSettings } from "@/lib/system-settings/repository";
 import { ContributionStatus, MembershipProgressionStatus } from "@/types/enums";
@@ -29,7 +33,13 @@ export const metadata = createPageMetadata(
 
 const HISTORY_PAGE_SIZE = 100;
 
-export default async function MemberContributionsPage() {
+interface MemberContributionsPageProps {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+export default async function MemberContributionsPage({
+  searchParams,
+}: MemberContributionsPageProps) {
   const actor = await getCurrentUserFromSession();
 
   if (!actor) {
@@ -50,6 +60,11 @@ export default async function MemberContributionsPage() {
     );
   }
 
+  const params = await searchParams;
+  const cancelled =
+    params.cancelled === "1" ||
+    (Array.isArray(params.cancelled) && params.cancelled.includes("1"));
+
   // One member-scoped contributions read drives history, stats, and outstanding.
   const [allRecords, progression, settings] = await Promise.all([
     listAllMemberContributions(actor.uid),
@@ -66,20 +81,34 @@ export default async function MemberContributionsPage() {
   const records = allRecords.slice(0, HISTORY_PAGE_SIZE);
   const lastContributionDate = records[0]?.createdAt ?? null;
   const asOf = getCurrentMonthYear();
+  const canMakePayments = hasPermission(actor.role, Permission.MAKE_PAYMENTS);
+  if (canMakePayments) {
+    logMemberOnlinePaymentsAvailability("portal/contributions");
+  }
+  const onlineCheckoutAvailable = areMemberOnlinePaymentsAvailable();
+  const onlineCheckoutUnavailableMessage =
+    getMemberOnlinePaymentsUnavailableMessage();
 
   return (
     <MemberPageShell
       title="My Contributions"
       description="Your monthly dues and other welfare scheme contributions."
     >
-      {hasPermission(actor.role, Permission.MAKE_PAYMENTS) ? (
+      {cancelled ? (
+        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          Online checkout was cancelled. No new payment was completed. You can
+          try again when ready, or check Payment History if a pending reference
+          already exists.
+        </p>
+      ) : null}
+      {canMakePayments ? (
         <MemberOutstandingContributionsPayment
           memberId={actor.uid}
           monthlyDuesAmount={outstanding.monthlyDuesAmount}
           arrears={outstanding.arrears}
           current={outstanding.current}
-          paymentsEnabled={isPaymentsEnabled()}
-          serviceNumber={actor.serviceNumber}
+          onlineCheckoutAvailable={onlineCheckoutAvailable}
+          onlineCheckoutUnavailableMessage={onlineCheckoutUnavailableMessage}
           progression={{
             membershipStart: outstanding.membershipStart,
             asOf,

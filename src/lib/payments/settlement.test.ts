@@ -15,6 +15,7 @@ import type { SerializedPayment } from "@/types/payment";
 
 const mockGetPaymentByReference = vi.fn();
 const mockUpdatePaymentStatus = vi.fn();
+const mockClaimSuccess = vi.fn();
 const mockPaystackVerify = vi.fn();
 const mockEnsureContributionFromPayment = vi.fn();
 const mockCreateAuditLog = vi.fn();
@@ -23,6 +24,7 @@ const mockAbandonStale = vi.fn();
 vi.mock("@/lib/payments/repository", () => ({
   getPaymentByReference: (...args: unknown[]) => mockGetPaymentByReference(...args),
   updatePaymentStatus: (...args: unknown[]) => mockUpdatePaymentStatus(...args),
+  claimPaymentSuccessTransition: (...args: unknown[]) => mockClaimSuccess(...args),
 }));
 
 vi.mock("@/lib/integrations/paystack/client", () => ({
@@ -114,11 +116,17 @@ function mockSuccessfulSettlement(
   paymentOverrides: Partial<SerializedPayment> = {},
   verifyOverrides: Parameters<typeof makeVerifyResponse>[0] = {},
 ) {
+  const successPayment = makePayment({
+    status: PaymentStatus.SUCCESS,
+    ...paymentOverrides,
+  });
   mockGetPaymentByReference.mockResolvedValue(makePayment(paymentOverrides));
   mockPaystackVerify.mockResolvedValue(makeVerifyResponse(verifyOverrides));
-  mockUpdatePaymentStatus.mockResolvedValue(
-    makePayment({ status: PaymentStatus.SUCCESS, ...paymentOverrides }),
-  );
+  mockClaimSuccess.mockResolvedValue({
+    outcome: "claimed",
+    payment: successPayment,
+  });
+  mockUpdatePaymentStatus.mockResolvedValue(successPayment);
 }
 
 describe("paystack amount conversion", () => {
@@ -161,7 +169,7 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(settled);
+    mockClaimSuccess.mockResolvedValue({ outcome: "claimed", payment: settled });
 
     const result = await settlePaymentFromPaystackReference(reference, {
       actor: memberActor,
@@ -185,9 +193,10 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(
-      makePayment({ status: PaymentStatus.SUCCESS }),
-    );
+    mockClaimSuccess.mockResolvedValue({
+      outcome: "claimed",
+      payment: makePayment({ status: PaymentStatus.SUCCESS }),
+    });
 
     await expect(
       settlePaymentFromPaystackReference(reference),
@@ -329,19 +338,25 @@ describe("settlePaymentFromPaystackReference", () => {
     });
 
     it("TEST 9. concurrent callback and webhook settlement accept fee gross-up", async () => {
-      mockSuccessfulSettlement(
-        { amount: 50 },
-        { amount: 5100, requestedAmount: 5000, fees: 100 },
+      const success = makePayment({ status: PaymentStatus.SUCCESS, amount: 50 });
+      mockGetPaymentByReference.mockResolvedValue(makePayment({ amount: 50 }));
+      mockPaystackVerify.mockResolvedValue(
+        makeVerifyResponse({ amount: 5100, requestedAmount: 5000, fees: 100 }),
       );
+      mockClaimSuccess
+        .mockResolvedValueOnce({ outcome: "claimed", payment: success })
+        .mockResolvedValueOnce({ outcome: "already_settled", payment: success });
 
       const [callbackResult, webhookResult] = await Promise.all([
         settlePaymentFromPaystackReference(reference, { source: "callback" }),
         settlePaymentFromPaystackReference(reference, { source: "webhook" }),
       ]);
 
-      expect(callbackResult.outcome).toBe("settled");
-      expect(webhookResult.outcome).toBe("settled");
+      expect([callbackResult.outcome, webhookResult.outcome].sort()).toEqual(
+        ["already_settled", "settled"].sort(),
+      );
       expect(mockEnsureContributionFromPayment).toHaveBeenCalled();
+      expect(mockCreateAuditLog).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -354,9 +369,10 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "ghs",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(
-      makePayment({ status: PaymentStatus.SUCCESS }),
-    );
+    mockClaimSuccess.mockResolvedValue({
+      outcome: "claimed",
+      payment: makePayment({ status: PaymentStatus.SUCCESS }),
+    });
 
     await expect(
       settlePaymentFromPaystackReference(reference),
@@ -433,9 +449,10 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(
-      makePayment({ status: PaymentStatus.SUCCESS }),
-    );
+    mockClaimSuccess.mockResolvedValue({
+      outcome: "claimed",
+      payment: makePayment({ status: PaymentStatus.SUCCESS }),
+    });
 
     await settlePaymentFromPaystackReference(reference);
 
@@ -451,9 +468,10 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(
-      makePayment({ status: PaymentStatus.SUCCESS }),
-    );
+    mockClaimSuccess.mockResolvedValue({
+      outcome: "claimed",
+      payment: makePayment({ status: PaymentStatus.SUCCESS }),
+    });
 
     const result = await settlePaymentFromPaystackReference(reference, {
       source: "webhook",
@@ -488,9 +506,10 @@ describe("settlePaymentFromPaystackReference", () => {
       currency: "GHS",
       paidAt: new Date("2026-06-17T11:00:00.000Z"),
     });
-    mockUpdatePaymentStatus.mockResolvedValue(
-      makePayment({ status: PaymentStatus.SUCCESS }),
-    );
+    mockClaimSuccess.mockResolvedValue({
+      outcome: "claimed",
+      payment: makePayment({ status: PaymentStatus.SUCCESS }),
+    });
 
     await settlePaymentFromPaystackReference(reference, { source: "webhook" });
 
@@ -583,6 +602,7 @@ describe("payment API routes", () => {
         profileCompletionPercentage: 100,
       },
       settlePaymentFromPaystackReference: (...args: unknown[]) => mockSettle(...args),
+      settlePaymentByReference: (...args: unknown[]) => mockSettle(...args),
     }));
     vi.doMock("@/lib/integrations/paystack/webhook-signature", () => ({
       verifyPaystackWebhookSignature: (...args: unknown[]) =>

@@ -66,7 +66,7 @@ export default async function PaymentsPage({ searchParams }: PaymentsPageProps) 
   return (
     <MemberPageShell
       title="Payment History"
-      description="Track your Paystack welfare payments and verification status."
+      description="Track your welfare payments and verification status."
     >
       <Suspense fallback={null}>
         <PaymentVerificationBanner />

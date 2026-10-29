@@ -14,7 +14,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ManualMomoPaymentPanel } from "@/components/member/manual-momo-payment-panel";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
 import { formatCurrency } from "@/lib/utils/currency";
@@ -43,10 +42,13 @@ interface MemberOutstandingContributionsPaymentProps {
   arrears: OutstandingMonthItem[];
   current: OutstandingMonthItem | null;
   progression: ProgressionSnapshot;
-  /** Server-evaluated; must not be inferred from client env alone. */
-  paymentsEnabled: boolean;
-  /** Shown as the MoMo payment reference while manual mode is active. */
-  serviceNumber?: string | null;
+  /**
+   * Server-evaluated: PAYMENTS_ENABLED and Hubtel credentials.
+   * Must not be inferred from client env alone.
+   */
+  onlineCheckoutAvailable: boolean;
+  /** Server-provided copy when checkout is unavailable. */
+  onlineCheckoutUnavailableMessage: string;
 }
 
 function periodKey(item: { month: number; year: number }): string {
@@ -61,14 +63,97 @@ function PaymentDueBadge() {
   );
 }
 
+function OutstandingBalanceSummary({
+  current,
+  arrears,
+  hasArrears,
+  allOutstanding,
+  arrearsTotal,
+  outstandingTotal,
+}: {
+  current: OutstandingMonthItem | null;
+  arrears: OutstandingMonthItem[];
+  hasArrears: boolean;
+  allOutstanding: OutstandingMonthItem[];
+  arrearsTotal: number;
+  outstandingTotal: number;
+}) {
+  if (allOutstanding.length === 0) {
+    return (
+      <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+        You have no outstanding monthly dues. All contribution months from your
+        join date through the current month are paid.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-5 space-y-5">
+      {current ? (
+        <section className="rounded-xl border border-[#166534]/20 bg-[#166534]/[0.03] p-4 sm:p-5">
+          <p className="text-xs font-semibold tracking-wide text-[#166534] uppercase">
+            Monthly Welfare Contribution
+          </p>
+          <p className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+            {current.label}
+          </p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Your regular monthly welfare contribution
+          </p>
+          <p className="mt-3 text-xl font-semibold text-[#166534] sm:text-2xl">
+            {formatCurrency(current.amount)}
+          </p>
+          <div className="mt-3">
+            <PaymentDueBadge />
+          </div>
+        </section>
+      ) : null}
+
+      {hasArrears ? (
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-foreground">
+              Previous Unpaid Months
+            </h3>
+            <p className="mt-1 text-sm font-medium text-foreground">
+              {arrears.length === 1
+                ? "1 outstanding month"
+                : `${arrears.length} outstanding months`}
+              {" · "}
+              {formatCurrency(arrearsTotal)}
+            </p>
+          </div>
+          <ul className="space-y-2">
+            {arrears.map((item) => (
+              <li
+                key={periodKey(item)}
+                className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.08] bg-white px-3 py-3 text-sm"
+              >
+                <span className="font-medium text-foreground">{item.label}</span>
+                <span className="font-medium text-foreground">
+                  {formatCurrency(item.amount)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <p className="text-sm font-semibold text-foreground">
+        Total outstanding {formatCurrency(outstandingTotal)}
+      </p>
+    </div>
+  );
+}
+
 export function MemberOutstandingContributionsPayment({
   memberId,
   monthlyDuesAmount,
   arrears,
   current,
   progression,
-  paymentsEnabled,
-  serviceNumber,
+  onlineCheckoutAvailable,
+  onlineCheckoutUnavailableMessage,
 }: MemberOutstandingContributionsPaymentProps) {
   const allOutstanding = useMemo(
     () => [...arrears, ...(current ? [current] : [])],
@@ -94,6 +179,8 @@ export function MemberOutstandingContributionsPayment({
     selectedKeys.includes(periodKey(item)),
   );
   const totalAmount = selectedMonths.length * monthlyDuesAmount;
+  const arrearsTotal = arrears.reduce((sum, item) => sum + item.amount, 0);
+  const outstandingTotal = arrearsTotal + (current ? current.amount : 0);
 
   const estimate = useMemo(() => {
     if (selectedMonths.length === 0) {
@@ -140,6 +227,9 @@ export function MemberOutstandingContributionsPayment({
   }
 
   async function handlePayMonths(months: OutstandingMonthItem[]) {
+    if (isSubmitting || isOtherSubmitting) {
+      return;
+    }
     if (months.length === 0) {
       setError("Select at least one contribution month.");
       return;
@@ -170,7 +260,7 @@ export function MemberOutstandingContributionsPayment({
       };
 
       if (!response.ok || !responsePayload.data?.authorizationUrl) {
-        throw new Error(responsePayload.error || "Failed to start payment.");
+        throw new Error(responsePayload.error || "Failed to start online payment.");
       }
 
       window.location.href = responsePayload.data.authorizationUrl;
@@ -178,7 +268,7 @@ export function MemberOutstandingContributionsPayment({
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "Failed to start payment.",
+          : "Failed to start online payment.",
       );
       setIsSubmitting(false);
     }
@@ -194,6 +284,9 @@ export function MemberOutstandingContributionsPayment({
   }
 
   async function handleOtherPayment() {
+    if (isSubmitting || isOtherSubmitting) {
+      return;
+    }
     setError(null);
     setIsOtherSubmitting(true);
 
@@ -219,7 +312,7 @@ export function MemberOutstandingContributionsPayment({
       };
 
       if (!response.ok || !responsePayload.data?.authorizationUrl) {
-        throw new Error(responsePayload.error || "Failed to start payment.");
+        throw new Error(responsePayload.error || "Failed to start online payment.");
       }
 
       window.location.href = responsePayload.data.authorizationUrl;
@@ -227,7 +320,7 @@ export function MemberOutstandingContributionsPayment({
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "Failed to start payment.",
+          : "Failed to start online payment.",
       );
       setIsOtherSubmitting(false);
     }
@@ -237,11 +330,7 @@ export function MemberOutstandingContributionsPayment({
     ? "Pay multiple months or arrears"
     : "Pay outstanding months";
 
-  if (!paymentsEnabled) {
-    const arrearsTotal = arrears.reduce((sum, item) => sum + item.amount, 0);
-    const outstandingTotal =
-      arrearsTotal + (current ? current.amount : 0);
-
+  if (!onlineCheckoutAvailable) {
     return (
       <div className="mb-6 space-y-4">
         <div className="rounded-2xl border border-black/[0.08] bg-white p-4 shadow-sm sm:p-5">
@@ -251,9 +340,8 @@ export function MemberOutstandingContributionsPayment({
                 Monthly Welfare Contributions
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Your outstanding balance is shown below. Pay via Mobile Money
-                using the details provided — do not use online checkout while
-                this temporary arrangement is active.
+                Your outstanding balance is shown below. Online payment is
+                currently unavailable.
               </p>
             </div>
             <Link
@@ -265,74 +353,18 @@ export function MemberOutstandingContributionsPayment({
             </Link>
           </div>
 
-          {allOutstanding.length === 0 ? (
-            <p className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
-              You have no outstanding monthly dues. All contribution months from
-              your join date through the current month are paid.
-            </p>
-          ) : (
-            <div className="mt-5 space-y-5">
-              {current ? (
-                <section className="rounded-xl border border-[#166534]/20 bg-[#166534]/[0.03] p-4 sm:p-5">
-                  <p className="text-xs font-semibold tracking-wide text-[#166534] uppercase">
-                    Monthly Welfare Contribution
-                  </p>
-                  <p className="mt-2 text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-                    {current.label}
-                  </p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Your regular monthly welfare contribution
-                  </p>
-                  <p className="mt-3 text-xl font-semibold text-[#166534] sm:text-2xl">
-                    {formatCurrency(current.amount)}
-                  </p>
-                  <div className="mt-3">
-                    <PaymentDueBadge />
-                  </div>
-                </section>
-              ) : null}
+          <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+            {onlineCheckoutUnavailableMessage}
+          </p>
 
-              {hasArrears ? (
-                <section className="space-y-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-foreground">
-                      Previous Unpaid Months
-                    </h3>
-                    <p className="mt-1 text-sm font-medium text-foreground">
-                      {arrears.length === 1
-                        ? "1 outstanding month"
-                        : `${arrears.length} outstanding months`}
-                      {" · "}
-                      {formatCurrency(arrearsTotal)}
-                    </p>
-                  </div>
-                  <ul className="space-y-2">
-                    {arrears.map((item) => (
-                      <li
-                        key={periodKey(item)}
-                        className="flex items-center justify-between gap-3 rounded-xl border border-black/[0.08] bg-white px-3 py-3 text-sm"
-                      >
-                        <span className="font-medium text-foreground">
-                          {item.label}
-                        </span>
-                        <span className="font-medium text-foreground">
-                          {formatCurrency(item.amount)}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ) : null}
-
-              <p className="text-sm font-semibold text-foreground">
-                Total outstanding {formatCurrency(outstandingTotal)}
-              </p>
-            </div>
-          )}
-
-          <div className="mt-5">
-            <ManualMomoPaymentPanel serviceNumber={serviceNumber} />
-          </div>
+          <OutstandingBalanceSummary
+            current={current}
+            arrears={arrears}
+            hasArrears={hasArrears}
+            allOutstanding={allOutstanding}
+            arrearsTotal={arrearsTotal}
+            outstandingTotal={outstandingTotal}
+          />
         </div>
       </div>
     );
@@ -347,8 +379,9 @@ export function MemberOutstandingContributionsPayment({
               Monthly Welfare Contributions
             </h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Pay your regular monthly welfare contribution. Each month can only
-              be paid once.
+              Pay securely online. Each month can only be paid once. Returning
+              from checkout does not mark a payment as successful until
+              verification completes.
             </p>
           </div>
           <Link
@@ -389,11 +422,12 @@ export function MemberOutstandingContributionsPayment({
                     type="button"
                     onClick={handlePayCurrentMonth}
                     loading={isSubmitting}
-                    loadingText="Processing…"
+                    loadingText="Redirecting to checkout…"
+                    disabled={isOtherSubmitting}
                     className="w-full bg-[#166534] text-white hover:bg-[#14532d] sm:w-auto"
                   >
                     <CreditCard className="size-4" />
-                    Pay {current.label} Contribution
+                    Pay {current.label}
                   </LoadingButton>
                 </div>
               </section>
@@ -411,9 +445,7 @@ export function MemberOutstandingContributionsPayment({
                         ? "1 outstanding month"
                         : `${arrears.length} outstanding months`}
                       {" · "}
-                      {formatCurrency(
-                        arrears.reduce((sum, item) => sum + item.amount, 0),
-                      )}
+                      {formatCurrency(arrearsTotal)}
                     </p>
                   ) : null}
                   <p className="mt-1 text-sm text-muted-foreground">
@@ -581,8 +613,8 @@ export function MemberOutstandingContributionsPayment({
                           </p>
                         ) : null}
                         <p className="mt-2 text-xs text-muted-foreground">
-                          Estimate only. Final progression updates after
-                          successful payment verification.
+                          Estimate only. Final progression updates after payment
+                          verification.
                         </p>
                       </div>
                     </div>
@@ -599,8 +631,8 @@ export function MemberOutstandingContributionsPayment({
                         type="button"
                         onClick={handlePaySelected}
                         loading={isSubmitting}
-                        loadingText="Processing…"
-                        disabled={selectedMonths.length === 0}
+                        loadingText="Redirecting to checkout…"
+                        disabled={selectedMonths.length === 0 || isOtherSubmitting}
                         className="bg-[#166534] text-white hover:bg-[#14532d]"
                       >
                         <CreditCard className="size-4" />
@@ -681,7 +713,8 @@ export function MemberOutstandingContributionsPayment({
                 variant="outline"
                 onClick={handleOtherPayment}
                 loading={isOtherSubmitting}
-                loadingText="Processing…"
+                loadingText="Redirecting to checkout…"
+                disabled={isSubmitting}
               >
                 Pay Special Contribution
               </LoadingButton>

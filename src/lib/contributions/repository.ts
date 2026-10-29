@@ -234,6 +234,19 @@ export async function createAutomatedContribution(
   const ref = db.collection(COLLECTIONS.CONTRIBUTIONS).doc(documentId);
   const reporting = deriveReportingFields(input);
 
+  const automationLabel =
+    input.source === ContributionSource.HUBTEL
+      ? {
+          recordedBy: "hubtel-automation",
+          recordedByName: "Hubtel Automation",
+          defaultRemarks: `Created from Hubtel payment ${input.paymentReference}`,
+        }
+      : {
+          recordedBy: "paystack-automation",
+          recordedByName: "Paystack Automation",
+          defaultRemarks: `Created from Paystack payment ${input.paymentReference}`,
+        };
+
   const document = sanitizeFirestoreData({
     memberId: input.memberId,
     memberName: input.memberName,
@@ -243,11 +256,9 @@ export async function createAutomatedContribution(
     month: input.month,
     year: input.year,
     status: ContributionStatus.PAID,
-    remarks:
-      input.remarks?.trim() ||
-      `Created from Paystack payment ${input.paymentReference}`,
-    recordedBy: "paystack-automation",
-    recordedByName: "Paystack Automation",
+    remarks: input.remarks?.trim() || automationLabel.defaultRemarks,
+    recordedBy: automationLabel.recordedBy,
+    recordedByName: automationLabel.recordedByName,
     contributionMonth: reporting.contributionMonth,
     contributionYear: reporting.contributionYear,
     source: input.source,

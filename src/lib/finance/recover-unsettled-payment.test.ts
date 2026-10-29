@@ -32,7 +32,7 @@ vi.mock("@/lib/payments/settlement", async () => {
   );
   return {
     ...actual,
-    settlePaymentFromPaystackReference: (...args: unknown[]) => mockSettle(...args),
+    settlePaymentByReference: (...args: unknown[]) => mockSettle(...args),
   };
 });
 
@@ -441,7 +441,9 @@ describe("recovery UI boundaries", () => {
     );
     expect(source).toContain("AlertDialogDescription");
     expect(source).not.toContain("AlertDialogDescription asChild");
-    expect(source).toContain("This will verify the Paystack charge again on the server");
+    expect(source).toContain(
+      "This recovers a historical Paystack charge by verifying it again on the server",
+    );
     expect(source).toContain("<dl");
     const descriptionStart = source.indexOf("<AlertDialogDescription>");
     const descriptionEnd = source.indexOf("</AlertDialogDescription>");

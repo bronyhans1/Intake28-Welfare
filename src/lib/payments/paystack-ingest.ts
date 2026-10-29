@@ -3,6 +3,7 @@ import { buildAuditActor } from "@/lib/audit/actor";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import {
   PaymentSettlementError,
+  settlePaymentByReference,
   settlePaymentFromPaystackReference,
   PAYSTACK_SETTLEMENT_ACTOR,
   type PaymentSettlementOutcome,
@@ -191,16 +192,37 @@ export async function recordCallbackOutcomeAudit(
 }
 
 /**
- * Run shared settlement for webhook/callback and classify the durable outcome.
+ * Provider-routed settlement for browser callback / trusted server notify.
+ * Always re-verifies with the payment's provider status API.
+ */
+export async function settlePaymentIngest(
+  reference: string,
+  source: Extract<PaymentSettlementSource, "webhook" | "callback">,
+): Promise<PaystackIngestClassification> {
+  try {
+    const result = await settlePaymentByReference(reference, { source });
+    return classifySettlementResult(result.outcome, result.message);
+  } catch (error) {
+    return classifySettlementFailure(error);
+  }
+}
+
+/**
+ * Paystack webhook path — always uses Paystack settlement (signature already verified).
  */
 export async function settlePaystackIngest(
   reference: string,
   source: Extract<PaymentSettlementSource, "webhook" | "callback">,
 ): Promise<PaystackIngestClassification> {
-  try {
-    const result = await settlePaymentFromPaystackReference(reference, { source });
-    return classifySettlementResult(result.outcome, result.message);
-  } catch (error) {
-    return classifySettlementFailure(error);
+  if (source === "webhook") {
+    try {
+      const result = await settlePaymentFromPaystackReference(reference, {
+        source,
+      });
+      return classifySettlementResult(result.outcome, result.message);
+    } catch (error) {
+      return classifySettlementFailure(error);
+    }
   }
+  return settlePaymentIngest(reference, source);
 }

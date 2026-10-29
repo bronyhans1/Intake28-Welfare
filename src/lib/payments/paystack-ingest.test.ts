@@ -4,6 +4,7 @@ import { PaymentSettlementError } from "@/lib/payments/paystack-settlement-rules
 import {
   classifySettlementFailure,
   classifySettlementResult,
+  settlePaymentIngest,
   settlePaystackIngest,
 } from "@/lib/payments/paystack-ingest";
 import { PaymentStatus, PaymentType } from "@/types/enums";
@@ -18,6 +19,7 @@ vi.mock("@/lib/payments/settlement", async () => {
   return {
     ...actual,
     settlePaymentFromPaystackReference: (...args: unknown[]) => mockSettle(...args),
+    settlePaymentByReference: (...args: unknown[]) => mockSettle(...args),
   };
 });
 
@@ -137,6 +139,46 @@ describe("settlePaystackIngest", () => {
     const result = await settlePaystackIngest("GIS-MISSING", "webhook");
     expect(result.ack).toBe("rejected_permanent");
     expect(result.httpStatus).toBe(200);
+  });
+});
+
+describe("settlePaymentIngest provider routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("routes callback settlement through settlePaymentByReference", async () => {
+    mockSettle.mockResolvedValue({
+      outcome: "pending",
+      payment: {
+        id: "p1",
+        reference: "GIS-HUBTEL-1",
+        status: PaymentStatus.PENDING,
+        paymentType: PaymentType.MONTHLY_DUES,
+      },
+      message: "Hubtel reported status: Unpaid",
+    });
+
+    const result = await settlePaymentIngest("GIS-HUBTEL-1", "callback");
+    expect(result).toMatchObject({
+      ack: "processed",
+      category: "non_success_status",
+      httpStatus: 200,
+    });
+    expect(mockSettle).toHaveBeenCalledWith("GIS-HUBTEL-1", { source: "callback" });
+  });
+
+  it("classifies Hubtel status timeouts as retryable", async () => {
+    mockSettle.mockRejectedValue(
+      new PaymentSettlementError("Unable to reach Hubtel transaction status service.", {
+        retryable: true,
+      }),
+    );
+    const result = await settlePaymentIngest("GIS-HUBTEL-1", "callback");
+    expect(result).toMatchObject({
+      ack: "retryable",
+      httpStatus: 503,
+    });
   });
 });
 

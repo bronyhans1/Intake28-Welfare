@@ -159,6 +159,32 @@ describe("ensureContributionFromPayment", () => {
     );
   });
 
+  it("records official amount only when checkoutAmount differs (never dues = fee total)", async () => {
+    const result = await ensureContributionFromPayment(
+      {
+        ...basePayment,
+        provider: PaymentProvider.HUBTEL,
+        amount: 50,
+        checkoutAmount: 51,
+        processingFeeAmount: 1,
+      },
+      actor,
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(mockCreateAutomatedContribution).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 }),
+    );
+    expect(mockCreateAutomatedContribution).not.toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 51 }),
+    );
+    expect(mockEnsureReceiptFromPayment).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50, checkoutAmount: 51 }),
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
   it("creates one contribution per selected month", async () => {
     mockCreateAutomatedContribution
       .mockResolvedValueOnce({
