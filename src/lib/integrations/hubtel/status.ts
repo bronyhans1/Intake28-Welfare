@@ -9,13 +9,35 @@ import { PaymentStatus } from "@/types/enums";
 const HUBTEL_STATUS_TIMEOUT_MS = 20_000;
 const HUBTEL_ERROR_BODY_LOG_LIMIT = 400;
 
+/** Documented Hubtel RMSC response when clientReference has no matching transaction. */
+export const HUBTEL_NO_RECORD_RESPONSE_CODE = "4720";
+
+const HUBTEL_NO_RECORD_MESSAGE_PATTERN =
+  /did not match any records|older than (?:a|one) month/i;
+
+export type HubtelStatusErrorKind = "no_record" | "http" | "network" | "parse";
+
 export class HubtelStatusRequestError extends Error {
   readonly retryable: boolean;
+  readonly kind: HubtelStatusErrorKind | null;
+  readonly responseCode: string | null;
+  readonly httpStatus: number | null;
 
-  constructor(message: string, options?: { retryable?: boolean }) {
+  constructor(
+    message: string,
+    options?: {
+      retryable?: boolean;
+      kind?: HubtelStatusErrorKind | null;
+      responseCode?: string | null;
+      httpStatus?: number | null;
+    },
+  ) {
     super(message);
     this.name = "HubtelStatusRequestError";
     this.retryable = options?.retryable ?? true;
+    this.kind = options?.kind ?? null;
+    this.responseCode = options?.responseCode ?? null;
+    this.httpStatus = options?.httpStatus ?? null;
   }
 }
 
@@ -74,6 +96,44 @@ function pickString(
     }
   }
   return null;
+}
+
+export function resolveHubtelStatusResponseCode(
+  payload: Record<string, unknown>,
+): string | null {
+  return pickString(payload, ["responseCode", "ResponseCode", "code", "Code"]);
+}
+
+/**
+ * True only for HTTP 400 no-record outcomes.
+ * Prefer structured response code `4720`; fall back to the documented message
+ * only when no response code is present (never remap unrelated 400 codes).
+ */
+export function isHubtelNoRecordCondition(input: {
+  httpStatus: number;
+  responseCode: string | null;
+  message: string | null;
+}): boolean {
+  if (input.httpStatus !== 400) {
+    return false;
+  }
+  if (input.responseCode === HUBTEL_NO_RECORD_RESPONSE_CODE) {
+    return true;
+  }
+  if (input.responseCode != null && input.responseCode !== "") {
+    return false;
+  }
+  return Boolean(
+    input.message && HUBTEL_NO_RECORD_MESSAGE_PATTERN.test(input.message),
+  );
+}
+
+export function isHubtelNoRecordStatusError(
+  error: unknown,
+): error is HubtelStatusRequestError {
+  return (
+    error instanceof HubtelStatusRequestError && error.kind === "no_record"
+  );
 }
 
 function parseAmount(value: unknown): number | null {
@@ -452,17 +512,31 @@ export async function hubtelFetchTransactionStatus(
 
   if (!response.ok) {
     const errorPayload = asRecord(parsed) ?? {};
-    console.error("[hubtel:status] http error", {
-      clientReference: trimmed,
-      httpStatus: response.status,
-      responseBody: sanitizeHubtelErrorBody(responseText),
-    });
-    throw new HubtelStatusRequestError(
+    const responseCode = resolveHubtelStatusResponseCode(errorPayload);
+    const message =
       typeof errorPayload.message === "string"
         ? errorPayload.message
-        : "Hubtel status request failed.",
-      { retryable: response.status >= 500 || response.status === 429 },
+        : typeof errorPayload.Message === "string"
+          ? errorPayload.Message
+          : "Hubtel status request failed.";
+    const noRecord = isHubtelNoRecordCondition({
+      httpStatus: response.status,
+      responseCode,
+      message,
+    });
+
+    console.error(
+      `[hubtel:status] http error httpStatus=${response.status} responseCode=${responseCode ?? "none"} kind=${noRecord ? "no_record" : "http"} clientReference=${trimmed}`,
     );
+
+    throw new HubtelStatusRequestError(message, {
+      retryable: noRecord
+        ? false
+        : response.status >= 500 || response.status === 429,
+      kind: noRecord ? "no_record" : "http",
+      responseCode,
+      httpStatus: response.status,
+    });
   }
 
   // HTTP success — reuse the single parsed value; do not re-parse responseText.

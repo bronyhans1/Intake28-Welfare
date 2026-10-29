@@ -64,6 +64,13 @@ export interface Payment {
    * One contribution record is created per period after verification.
    */
   selectedMonths?: Array<{ month: number; year: number }> | null;
+  /**
+   * Last definitive Hubtel RMSC no-record (4720) observation.
+   * Used only to suppress repeated automatic reconciliation lookups.
+   * Never implies SUCCESS or FAILED. Optional on legacy rows.
+   */
+  hubtelNoRecordCheckedAt?: Timestamp | null;
+  hubtelNoRecordResponseCode?: string | null;
   createdAt: Timestamp;
   paidAt: Timestamp | null;
   updatedAt: Timestamp;
@@ -72,11 +79,12 @@ export interface Payment {
 /** Plain JSON record safe for Server → Client Component props */
 export type SerializedPayment = Omit<
   Payment,
-  "createdAt" | "updatedAt" | "paidAt"
+  "createdAt" | "updatedAt" | "paidAt" | "hubtelNoRecordCheckedAt"
 > & {
   createdAt: string;
   updatedAt: string;
   paidAt: string | null;
+  hubtelNoRecordCheckedAt?: string | null;
 };
 
 /** Member-safe payment summary (excludes financeNotes) */

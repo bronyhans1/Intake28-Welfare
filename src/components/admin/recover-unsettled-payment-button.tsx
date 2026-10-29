@@ -24,6 +24,8 @@ interface RecoverUnsettledPaymentButtonProps {
   paymentType: string;
   periodLabel: string;
   portalStatus: PaymentStatus;
+  /** Display-only provider name; recovery re-resolves the provider on the server. */
+  providerLabel?: "Paystack" | "Hubtel";
 }
 
 export function RecoverUnsettledPaymentButton({
@@ -34,6 +36,7 @@ export function RecoverUnsettledPaymentButton({
   paymentType,
   periodLabel,
   portalStatus,
+  providerLabel = "Paystack",
 }: RecoverUnsettledPaymentButtonProps) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -88,12 +91,14 @@ export function RecoverUnsettledPaymentButton({
           <AlertDialogHeader>
             <AlertDialogTitle>Recover unsettled payment?</AlertDialogTitle>
             <AlertDialogDescription>
-              This recovers a historical Paystack charge by verifying it again on the server and, if
-              eligible, record the payment, contribution, and receipt through the
-              existing settlement process. It does not refund or reverse funds.
+              {`This recovers a historical ${providerLabel} charge by verifying it again on the server and, if eligible, record the payment, contribution, and receipt through the existing settlement process. It does not refund or reverse funds.`}
             </AlertDialogDescription>
             <div className="space-y-3 text-sm text-left">
               <dl className="grid gap-1 rounded-lg border border-black/[0.08] bg-black/[0.02] p-3 text-foreground">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-muted-foreground">Provider</dt>
+                  <dd className="text-right font-medium">{providerLabel}</dd>
+                </div>
                 <div className="flex justify-between gap-3">
                   <dt className="text-muted-foreground">Member</dt>
                   <dd className="text-right font-medium">{memberLabel}</dd>

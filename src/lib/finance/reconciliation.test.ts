@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getReconciliationSummary,
+  hubtelBatchPath,
   paystackBatchPath,
+  HUBTEL_RECONCILIATION_VERIFY_LIMIT,
   PAYSTACK_RECONCILIATION_PENDING_VERIFY_MS,
   PAYSTACK_RECONCILIATION_VERIFY_LIMIT,
   reconciliationStatusMessage,
@@ -42,6 +44,8 @@ const mockCollection = vi.fn();
 const mockWhere = vi.fn();
 const mockGet = vi.fn();
 const mockPaystackVerify = vi.fn();
+const mockHubtelStatus = vi.fn();
+const mockIsHubtelConfigured = vi.fn();
 const mockSettlePayment = vi.fn();
 const mockPaymentWrite = vi.fn();
 
@@ -61,6 +65,67 @@ vi.mock("@/lib/integrations/paystack/client", () => ({
   },
 }));
 
+vi.mock("@/lib/integrations/hubtel/status", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/integrations/hubtel/status")>();
+  return {
+    ...actual,
+    hubtelFetchTransactionStatus: (...args: unknown[]) => mockHubtelStatus(...args),
+    HubtelStatusRequestError: class HubtelStatusRequestError extends Error {
+      readonly retryable: boolean;
+      readonly kind: string | null;
+      readonly responseCode: string | null;
+      readonly httpStatus: number | null;
+      constructor(
+        message: string,
+        options?: {
+          retryable?: boolean;
+          kind?: string | null;
+          responseCode?: string | null;
+          httpStatus?: number | null;
+        },
+      ) {
+        super(message);
+        this.name = "HubtelStatusRequestError";
+        this.retryable = options?.retryable ?? true;
+        this.kind = options?.kind ?? null;
+        this.responseCode = options?.responseCode ?? null;
+        this.httpStatus = options?.httpStatus ?? null;
+      }
+    },
+    isHubtelNoRecordStatusError: (error: unknown) =>
+      Boolean(
+        error &&
+          typeof error === "object" &&
+          (error as { name?: string; kind?: string }).name ===
+            "HubtelStatusRequestError" &&
+          (error as { kind?: string }).kind === "no_record",
+      ),
+  };
+});
+
+const mockPersistHubtelNoRecord = vi.fn();
+const mockClearHubtelNoRecord = vi.fn();
+
+vi.mock("@/lib/payments/hubtel-no-record", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/payments/hubtel-no-record")>();
+  return {
+    ...actual,
+    persistHubtelNoRecordFromStatusError: (...args: unknown[]) =>
+      mockPersistHubtelNoRecord(...args),
+    clearHubtelNoRecordLookup: (...args: unknown[]) => mockClearHubtelNoRecord(...args),
+  };
+});
+
+vi.mock("@/lib/integrations/hubtel/checkout-config", () => ({
+  isHubtelPaymentConfigured: () => mockIsHubtelConfigured(),
+  HubtelPaymentConfigurationError: class HubtelPaymentConfigurationError extends Error {
+    constructor(message = "Hubtel Online Checkout is not configured.") {
+      super(message);
+      this.name = "HubtelPaymentConfigurationError";
+    }
+  },
+}));
+
 vi.mock("@/lib/payments/settlement", () => ({
   settlePaymentFromPaystackReference: (...args: unknown[]) => mockSettlePayment(...args),
 }));
@@ -74,6 +139,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 describe("getReconciliationSummary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsHubtelConfigured.mockReturnValue(false);
     mockCollection.mockReturnValue({ where: mockWhere });
     mockWhere.mockReturnValue({ get: mockGet });
     mockGet.mockResolvedValue({
@@ -328,6 +394,7 @@ describe("Paystack unsettled reconciliation", () => {
 
   beforeEach(() => {
     process.env.PAYSTACK_SECRET_KEY = "sk_test_reconciliation";
+    mockIsHubtelConfigured.mockReturnValue(false);
     paymentsByStatus = {
       [PaymentStatus.SUCCESS]: [],
       [PaymentStatus.ABANDONED]: [],
@@ -335,6 +402,7 @@ describe("Paystack unsettled reconciliation", () => {
       [PaymentStatus.FAILED]: [],
     };
     mockPaystackVerify.mockReset();
+    mockHubtelStatus.mockReset();
     mockSettlePayment.mockReset();
     mockPaymentWrite.mockReset();
     mockCollection.mockImplementation(() => ({
@@ -988,6 +1056,390 @@ describe("Paystack unsettled reconciliation", () => {
   });
 });
 
+describe("Hubtel unsettled reconciliation", () => {
+  const originalPaystackKey = process.env.PAYSTACK_SECRET_KEY;
+  let paymentsByStatus: Record<string, Array<Record<string, unknown>>>;
+
+  function hubtelSuccess(reference: string, overrides: Record<string, unknown> = {}) {
+    return {
+      status: PaymentStatus.SUCCESS,
+      lifecycleStatus: "Paid",
+      clientReference: reference,
+      providerReference: `HT-${reference}`,
+      amount: 51,
+      currency: "GHS",
+      paidAt: new Date("2026-10-07T18:56:38.000Z"),
+      rawStatus: "Paid",
+      ...overrides,
+    };
+  }
+
+  function hubtelPortalPayment(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "hubtel-candidate",
+      reference: "GIS-HUBTEL-001",
+      status: PaymentStatus.ABANDONED,
+      provider: PaymentProvider.HUBTEL,
+      paymentType: PaymentType.MONTHLY_DUES,
+      memberId: "member-1",
+      memberName: "Member User",
+      serviceNumber: "IS/12003",
+      amount: 50,
+      checkoutAmount: 51,
+      processingFeeAmount: 1,
+      currency: "GHS",
+      selectedMonths: [{ month: 10, year: 2026 }],
+      createdAt: "2026-10-07T18:56:06.755Z",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    delete process.env.PAYSTACK_SECRET_KEY;
+    mockIsHubtelConfigured.mockReturnValue(true);
+    paymentsByStatus = {
+      [PaymentStatus.SUCCESS]: [],
+      [PaymentStatus.ABANDONED]: [],
+      [PaymentStatus.PENDING]: [],
+      [PaymentStatus.FAILED]: [],
+    };
+    mockPaystackVerify.mockReset();
+    mockHubtelStatus.mockReset();
+    mockSettlePayment.mockReset();
+    mockPaymentWrite.mockReset();
+    mockPersistHubtelNoRecord.mockReset().mockResolvedValue(undefined);
+    mockClearHubtelNoRecord.mockReset().mockResolvedValue(undefined);
+    mockCollection.mockImplementation(() => ({
+      where: (_field: string, _op: string, status: string) => ({
+        get: async () => ({
+          docs: (paymentsByStatus[status] ?? []).map((payment) => ({
+            id: payment.id,
+            data: () => payment,
+          })),
+        }),
+      }),
+      doc: () => ({
+        set: mockPaymentWrite,
+        update: mockPaymentWrite,
+        create: mockPaymentWrite,
+      }),
+      add: mockPaymentWrite,
+    }));
+    mockFetchAllContributionsForReport.mockResolvedValue([]);
+    mockListReceipts.mockResolvedValue({
+      records: [],
+      total: 0,
+      page: 1,
+      pageSize: 10_000,
+      totalPages: 0,
+    });
+    mockGetPaymentByReference.mockResolvedValue(null);
+    mockLoadPaymentsByReference.mockResolvedValue(new Map());
+  });
+
+  afterEach(() => {
+    if (originalPaystackKey === undefined) {
+      delete process.env.PAYSTACK_SECRET_KEY;
+    } else {
+      process.env.PAYSTACK_SECRET_KEY = originalPaystackKey;
+    }
+  });
+
+  it("flags an abandoned Hubtel payment when Hubtel succeeded and the contribution is missing", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = [hubtelPortalPayment()];
+    mockHubtelStatus.mockResolvedValue(hubtelSuccess("GIS-HUBTEL-001"));
+
+    const summary = await getReconciliationSummary();
+
+    expect(summary.unsettledHubtelPayments.count).toBe(1);
+    expect(summary.unsettledHubtelPayments.records[0]).toMatchObject({
+      reference: "GIS-HUBTEL-001",
+      portalStatus: PaymentStatus.ABANDONED,
+      hubtelStatus: PaymentStatus.SUCCESS,
+      expectedAmount: 50,
+      expectedCheckoutAmount: 51,
+      currency: "GHS",
+    });
+    expect(summary.unsettledHubtelPayments.records[0]?.missingContributions).toContain(
+      "October 2026",
+    );
+    expect(summary.unsettledPaystackPayments.count).toBe(0);
+    expect(summary.isBalanced).toBe(false);
+    expect(mockSettlePayment).not.toHaveBeenCalled();
+    expect(mockPaymentWrite).not.toHaveBeenCalled();
+  });
+
+  it("does not flag Hubtel payments that failed, pending, or mismatched checkout amount", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      hubtelPortalPayment({ id: "failed", reference: "GIS-HT-FAILED" }),
+      hubtelPortalPayment({ id: "pending", reference: "GIS-HT-PENDING" }),
+      hubtelPortalPayment({ id: "mismatch", reference: "GIS-HT-MISMATCH" }),
+    ];
+    mockHubtelStatus.mockImplementation(async (reference: string) => {
+      if (reference === "GIS-HT-FAILED") {
+        return hubtelSuccess(reference, { status: PaymentStatus.FAILED, lifecycleStatus: "Failed" });
+      }
+      if (reference === "GIS-HT-PENDING") {
+        return hubtelSuccess(reference, {
+          status: PaymentStatus.PENDING,
+          lifecycleStatus: "Pending",
+        });
+      }
+      return hubtelSuccess(reference, { amount: 40 });
+    });
+
+    const summary = await getReconciliationSummary();
+
+    expect(summary.unsettledHubtelPayments.count).toBe(0);
+    expect(summary.hubtelSettlementMismatches.records.map((row) => row.issue)).toEqual([
+      "amount",
+    ]);
+    expect(summary.hubtelSettlementMismatches.records[0]).toMatchObject({
+      reference: "GIS-HT-MISMATCH",
+      expectedAmount: 50,
+      expectedCheckoutAmount: 51,
+    });
+    expect(mockSettlePayment).not.toHaveBeenCalled();
+  });
+
+  it("handles Paystack and Hubtel candidates in the same summary without cross-provider verify", async () => {
+    process.env.PAYSTACK_SECRET_KEY = "sk_test_reconciliation";
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      portalPayment({
+        id: "paystack-abandoned",
+        reference: "GIS-PS-001",
+        provider: PaymentProvider.PAYSTACK,
+      }),
+      hubtelPortalPayment({
+        id: "hubtel-abandoned",
+        reference: "GIS-HT-001",
+      }),
+    ];
+    mockPaystackVerify.mockResolvedValue(paystackSuccess("GIS-PS-001"));
+    mockHubtelStatus.mockResolvedValue(hubtelSuccess("GIS-HT-001"));
+
+    const summary = await getReconciliationSummary();
+
+    expect(mockPaystackVerify).toHaveBeenCalledTimes(1);
+    expect(mockPaystackVerify).toHaveBeenCalledWith("GIS-PS-001");
+    expect(mockHubtelStatus).toHaveBeenCalledTimes(1);
+    expect(mockHubtelStatus).toHaveBeenCalledWith("GIS-HT-001");
+    expect(summary.unsettledPaystackPayments.records.map((row) => row.reference)).toEqual([
+      "GIS-PS-001",
+    ]);
+    expect(summary.unsettledHubtelPayments.records.map((row) => row.reference)).toEqual([
+      "GIS-HT-001",
+    ]);
+    expect(summary.isBalanced).toBe(false);
+  });
+
+  it("reports Hubtel surplus when the period is already PAID on another reference", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      hubtelPortalPayment({
+        id: "surplus-hubtel",
+        reference: "GIS-HT-SURPLUS",
+        memberId: "member-dup",
+        serviceNumber: "IS/12304",
+      }),
+    ];
+    mockFetchAllContributionsForReport.mockResolvedValue([
+      {
+        id: "contribution-recorded",
+        paymentReference: "GIS-RECORDED-OCT",
+        contributionType: ContributionType.MONTHLY_DUES,
+        status: ContributionStatus.PAID,
+        memberId: "member-dup",
+        memberName: "Member User",
+        serviceNumber: "IS/12304",
+        amount: 50,
+        month: 10,
+        year: 2026,
+      },
+    ]);
+    mockHubtelStatus.mockResolvedValue(hubtelSuccess("GIS-HT-SURPLUS"));
+
+    const summary = await getReconciliationSummary();
+
+    expect(summary.unsettledHubtelPayments.count).toBe(0);
+    expect(summary.hubtelSurplusDuplicatePayments.count).toBe(1);
+    expect(summary.hubtelSurplusDuplicatePayments.records[0]).toMatchObject({
+      reference: "GIS-HT-SURPLUS",
+      expectedAmount: 50,
+      expectedCheckoutAmount: 51,
+      existingPaymentReference: "GIS-RECORDED-OCT",
+    });
+    expect(summary.isBalanced).toBe(false);
+  });
+
+  it("pages Hubtel candidates independently of Paystack batches", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = Array.from({ length: 25 }, (_, index) =>
+      hubtelPortalPayment({
+        id: `ht-batch-${index}`,
+        reference: `GIS-HT-BATCH-${String(index).padStart(2, "0")}`,
+        createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      }),
+    );
+    mockHubtelStatus.mockImplementation(async (reference: string) =>
+      hubtelSuccess(reference, { status: PaymentStatus.FAILED, lifecycleStatus: "Failed" }),
+    );
+
+    const first = await getReconciliationSummary({ hubtelBatch: 1 });
+    const second = await getReconciliationSummary({ hubtelBatch: "2" });
+
+    expect(HUBTEL_RECONCILIATION_VERIFY_LIMIT).toBe(20);
+    expect(first.hubtelCandidateWindow).toMatchObject({
+      batch: 1,
+      batchCount: 2,
+      candidateCount: 25,
+      rangeStart: 1,
+      rangeEnd: 20,
+      hasNext: true,
+      uncheckedCount: 5,
+    });
+    expect(second.hubtelCandidateWindow).toMatchObject({
+      batch: 2,
+      rangeStart: 21,
+      rangeEnd: 25,
+      hasPrevious: true,
+      hasNext: false,
+    });
+    expect(hubtelBatchPath(2, 3)).toBe(
+      "/admin/finance/reconciliation?paystackBatch=3&hubtelBatch=2",
+    );
+    expect(mockSettlePayment).not.toHaveBeenCalled();
+  });
+
+  it("does not write payments or call settlement during Hubtel reconciliation", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = [hubtelPortalPayment()];
+    mockHubtelStatus.mockResolvedValue(hubtelSuccess("GIS-HUBTEL-001"));
+
+    await getReconciliationSummary();
+
+    expect(mockSettlePayment).not.toHaveBeenCalled();
+    expect(mockPaymentWrite).not.toHaveBeenCalled();
+  });
+
+  it("classifies Hubtel 4720 no-record without settling or unbalancing", async () => {
+    const { HubtelStatusRequestError } = await import("@/lib/integrations/hubtel/status");
+    paymentsByStatus[PaymentStatus.ABANDONED] = [hubtelPortalPayment()];
+    mockHubtelStatus.mockRejectedValue(
+      new HubtelStatusRequestError(
+        "Your status check did not match any records or your reference is older than a month, please check your request and try again.",
+        {
+          retryable: false,
+          kind: "no_record",
+          responseCode: "4720",
+          httpStatus: 400,
+        },
+      ),
+    );
+
+    const summary = await getReconciliationSummary();
+
+    expect(summary.hubtelVerificationLimitations.count).toBe(1);
+    expect(summary.hubtelVerificationLimitations.records[0]).toMatchObject({
+      reference: "GIS-HUBTEL-001",
+      reason: "no_record",
+    });
+    expect(summary.unsettledHubtelPayments.count).toBe(0);
+    expect(summary.hubtelSettlementMismatches.count).toBe(0);
+    expect(summary.isBalanced).toBe(true);
+    expect(mockSettlePayment).not.toHaveBeenCalled();
+    expect(mockPaymentWrite).not.toHaveBeenCalled();
+    expect(mockPersistHubtelNoRecord).toHaveBeenCalledTimes(1);
+    expect(mockHubtelStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips automatic Hubtel lookup while a recent no-record marker is present", async () => {
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      hubtelPortalPayment({
+        hubtelNoRecordCheckedAt: new Date().toISOString(),
+        hubtelNoRecordResponseCode: "4720",
+      }),
+    ];
+
+    const first = await getReconciliationSummary();
+    const second = await getReconciliationSummary();
+
+    expect(mockHubtelStatus).not.toHaveBeenCalled();
+    expect(first.hubtelVerificationLimitations.records[0]?.reason).toBe("no_record");
+    expect(second.hubtelVerificationLimitations.records[0]?.reason).toBe("no_record");
+    expect(first.isBalanced).toBe(true);
+    expect(mockPersistHubtelNoRecord).not.toHaveBeenCalled();
+  });
+
+  it("allows authorized Hubtel force recheck to bypass no-record suppression", async () => {
+    const { HubtelStatusRequestError } = await import("@/lib/integrations/hubtel/status");
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      hubtelPortalPayment({
+        hubtelNoRecordCheckedAt: new Date().toISOString(),
+        hubtelNoRecordResponseCode: "4720",
+      }),
+    ];
+    mockHubtelStatus.mockRejectedValue(
+      new HubtelStatusRequestError("still missing", {
+        retryable: false,
+        kind: "no_record",
+        responseCode: "4720",
+        httpStatus: 400,
+      }),
+    );
+
+    const summary = await getReconciliationSummary({ hubtelForceRecheck: "1" });
+
+    expect(mockHubtelStatus).toHaveBeenCalledTimes(1);
+    expect(summary.hubtelVerificationLimitations.records[0]?.reason).toBe("no_record");
+    expect(mockPersistHubtelNoRecord).toHaveBeenCalledWith(
+      "GIS-HUBTEL-001",
+      expect.objectContaining({ kind: "no_record" }),
+      "reconciliation_recheck",
+    );
+    expect(summary.isBalanced).toBe(true);
+  });
+
+  it("keeps unrelated Hubtel HTTP errors as generic verification errors", async () => {
+    const { HubtelStatusRequestError } = await import("@/lib/integrations/hubtel/status");
+    paymentsByStatus[PaymentStatus.ABANDONED] = [hubtelPortalPayment()];
+    mockHubtelStatus.mockRejectedValue(
+      new HubtelStatusRequestError("Merchant account is invalid.", {
+        retryable: false,
+        kind: "http",
+        responseCode: "4000",
+        httpStatus: 400,
+      }),
+    );
+
+    const summary = await getReconciliationSummary();
+
+    expect(summary.hubtelVerificationLimitations.records[0]?.reason).toBe("error");
+    expect(mockPersistHubtelNoRecord).not.toHaveBeenCalled();
+    expect(summary.isBalanced).toBe(true);
+  });
+
+  it("preserves Hubtel rate-limit stop behavior", async () => {
+    const { HubtelStatusRequestError } = await import("@/lib/integrations/hubtel/status");
+    paymentsByStatus[PaymentStatus.ABANDONED] = [
+      hubtelPortalPayment({ id: "a", reference: "GIS-HT-A", createdAt: "2026-10-01T00:00:00.000Z" }),
+      hubtelPortalPayment({ id: "b", reference: "GIS-HT-B", createdAt: "2026-10-01T00:01:00.000Z" }),
+    ];
+    mockHubtelStatus.mockRejectedValue(
+      new HubtelStatusRequestError("too many requests", {
+        retryable: true,
+        kind: "http",
+        httpStatus: 429,
+      }),
+    );
+
+    const summary = await getReconciliationSummary();
+
+    expect(mockHubtelStatus).toHaveBeenCalledTimes(1);
+    expect(summary.hubtelVerificationLimitations.records.map((row) => row.reason)).toEqual([
+      "rate_limit",
+      "rate_limit",
+    ]);
+  });
+});
+
 describe("reconciliation server/client boundary", () => {
   const overviewSource = readFileSync(
     join(process.cwd(), "src/components/admin/reconciliation-overview.tsx"),
@@ -1011,13 +1463,15 @@ describe("reconciliation server/client boundary", () => {
     expect(overviewSource).not.toContain("@/lib/finance/reconciliation\"");
     expect(overviewSource).not.toContain("@/lib/firebase/admin");
     expect(overviewSource).not.toContain("paystackVerifyTransaction");
+    expect(overviewSource).not.toContain("hubtelFetchTransactionStatus");
     expect(overviewSource).not.toContain("settlePaymentFromPaystackReference");
   });
 
-  it("keeps Firebase Admin and Paystack verification out of the view module", () => {
+  it("keeps Firebase Admin and provider verification out of the view module", () => {
     expect(viewSource).not.toContain("firebase/admin");
     expect(viewSource).not.toContain("firebase-admin");
     expect(viewSource).not.toContain("paystackVerifyTransaction");
+    expect(viewSource).not.toContain("hubtelFetchTransactionStatus");
     expect(viewSource).not.toContain("PAYSTACK_SECRET_KEY");
     expect(viewSource).not.toContain("settlePaymentFromPaystackReference");
   });
@@ -1028,6 +1482,9 @@ describe("reconciliation server/client boundary", () => {
     expect(authIndex).toBeGreaterThan(-1);
     expect(summaryIndex).toBeGreaterThan(authIndex);
     expect(pageSource).toContain('redirect("/admin/dashboard")');
+    expect(pageSource).toContain("hubtelBatch");
+    expect(pageSource).toContain("hubtelRecheck");
+    expect(pageSource).toContain("Paystack or Hubtel");
     expect(serverSource).not.toContain("settlePaymentFromPaystackReference");
     expect(serverSource).not.toContain("abandonStalePendingPayments");
     expect(serverSource).not.toContain(".update(");
@@ -1036,6 +1493,7 @@ describe("reconciliation server/client boundary", () => {
 
   it("keeps surplus duplicate review read-only in the overview", () => {
     expect(overviewSource).toContain("Potential Surplus Or Duplicate Paystack Charges");
+    expect(overviewSource).toContain("Potential Surplus Or Duplicate Hubtel Charges");
     expect(overviewSource).toContain("not settle or refund payments");
     expect(overviewSource).not.toContain("settlePayment");
     expect(overviewSource).not.toMatch(/\bRefund\b/);
@@ -1043,14 +1501,16 @@ describe("reconciliation server/client boundary", () => {
 
   it("exposes recovery only for unsettled successes, not surplus or limitations", () => {
     expect(overviewSource).toContain("RecoverUnsettledPaymentButton");
-    const unsettledIdx = overviewSource.indexOf("Unsettled Paystack Successes");
-    const surplusIdx = overviewSource.indexOf("Potential Surplus Or Duplicate");
-    const limitationsIdx = overviewSource.indexOf("Paystack Verification Not Completed");
-    const recoverIdx = overviewSource.indexOf("<RecoverUnsettledPaymentButton");
-    expect(recoverIdx).toBeGreaterThan(unsettledIdx);
-    expect(recoverIdx).toBeLessThan(surplusIdx);
-    expect(overviewSource.slice(surplusIdx, limitationsIdx)).not.toContain(
-      "<RecoverUnsettledPaymentButton",
+    expect(overviewSource).toContain("Unsettled Hubtel Successes");
+    const paystackUnsettledIdx = overviewSource.indexOf("Unsettled Paystack Successes");
+    const hubtelUnsettledIdx = overviewSource.indexOf("Unsettled Hubtel Successes");
+    const paystackSurplusIdx = overviewSource.indexOf(
+      "Potential Surplus Or Duplicate Paystack Charges",
     );
+    const recoverIdx = overviewSource.indexOf("<RecoverUnsettledPaymentButton");
+    expect(recoverIdx).toBeGreaterThan(paystackUnsettledIdx);
+    expect(recoverIdx).toBeLessThan(paystackSurplusIdx);
+    expect(hubtelUnsettledIdx).toBeGreaterThan(paystackUnsettledIdx);
+    expect(hubtelUnsettledIdx).toBeLessThan(paystackSurplusIdx);
   });
 });

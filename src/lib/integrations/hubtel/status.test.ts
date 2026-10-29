@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   hubtelFetchTransactionStatus,
+  isHubtelNoRecordCondition,
   mapHubtelLifecycleStatus,
 } from "@/lib/integrations/hubtel/status";
 import { validateHubtelAmount } from "@/lib/payments/hubtel-settlement-rules";
@@ -633,7 +634,99 @@ describe("hubtelFetchTransactionStatus", () => {
 
     expect(missingDataLogCalls(errorSpy)).toHaveLength(0);
     expect(
-      errorSpy.mock.calls.some((call) => call[0] === "[hubtel:status] http error"),
+      errorSpy.mock.calls.some(
+        (call) =>
+          typeof call[0] === "string" &&
+          call[0].startsWith("[hubtel:status] http error"),
+      ),
     ).toBe(true);
+  });
+
+  it("classifies HTTP 400 response code 4720 as no_record", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: false,
+          status: 400,
+          body: {
+            responseCode: "4720",
+            message:
+              "Your status check did not match any records or your reference is older than a month, please check your request and try again.",
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      hubtelFetchTransactionStatus("GIS-20261029-MMFMM2", testConfig),
+    ).rejects.toMatchObject({
+      name: "HubtelStatusRequestError",
+      kind: "no_record",
+      responseCode: "4720",
+      httpStatus: 400,
+      retryable: false,
+    });
+
+    expect(errorSpy.mock.calls[0]?.[0]).toContain("httpStatus=400");
+    expect(errorSpy.mock.calls[0]?.[0]).toContain("responseCode=4720");
+    expect(errorSpy.mock.calls[0]?.[0]).toContain("kind=no_record");
+    expect(JSON.stringify(errorSpy.mock.calls[0])).not.toMatch(/Basic |api[_-]?key|secret/i);
+  });
+
+  it("keeps unrelated HTTP 400 responses as generic http errors", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        mockJsonResponse({
+          ok: false,
+          status: 400,
+          body: {
+            responseCode: "4000",
+            message: "Merchant account is invalid.",
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      hubtelFetchTransactionStatus("GIS-20261029-QXRXN7", testConfig),
+    ).rejects.toMatchObject({
+      name: "HubtelStatusRequestError",
+      kind: "http",
+      responseCode: "4000",
+      httpStatus: 400,
+      retryable: false,
+    });
+
+    expect(errorSpy.mock.calls[0]?.[0]).toContain("kind=http");
+  });
+
+  it("uses the no-record message only when response code is absent", () => {
+    expect(
+      isHubtelNoRecordCondition({
+        httpStatus: 400,
+        responseCode: null,
+        message:
+          "Your status check did not match any records or your reference is older than a month",
+      }),
+    ).toBe(true);
+    expect(
+      isHubtelNoRecordCondition({
+        httpStatus: 400,
+        responseCode: "4000",
+        message:
+          "Your status check did not match any records or your reference is older than a month",
+      }),
+    ).toBe(false);
+    expect(
+      isHubtelNoRecordCondition({
+        httpStatus: 500,
+        responseCode: "4720",
+        message: null,
+      }),
+    ).toBe(false);
   });
 });

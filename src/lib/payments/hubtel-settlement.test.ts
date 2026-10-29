@@ -18,6 +18,8 @@ const mockPaystackVerify = vi.fn();
 const mockEnsureContributionFromPayment = vi.fn();
 const mockCreateAuditLog = vi.fn();
 const mockAbandonStale = vi.fn();
+const mockPersistNoRecord = vi.fn();
+const mockClearNoRecord = vi.fn();
 
 vi.mock("@/lib/payments/repository", () => ({
   getPaymentByReference: (...args: unknown[]) => mockGetPaymentByReference(...args),
@@ -30,12 +32,40 @@ vi.mock("@/lib/integrations/hubtel/status", () => ({
   hubtelFetchTransactionStatus: (...args: unknown[]) => mockHubtelStatus(...args),
   HubtelStatusRequestError: class HubtelStatusRequestError extends Error {
     retryable: boolean;
-    constructor(message: string, options?: { retryable?: boolean }) {
+    kind: string | null;
+    responseCode: string | null;
+    httpStatus: number | null;
+    constructor(
+      message: string,
+      options?: {
+        retryable?: boolean;
+        kind?: string | null;
+        responseCode?: string | null;
+        httpStatus?: number | null;
+      },
+    ) {
       super(message);
       this.name = "HubtelStatusRequestError";
       this.retryable = options?.retryable ?? true;
+      this.kind = options?.kind ?? null;
+      this.responseCode = options?.responseCode ?? null;
+      this.httpStatus = options?.httpStatus ?? null;
     }
   },
+  isHubtelNoRecordStatusError: (error: unknown) =>
+    Boolean(
+      error &&
+        typeof error === "object" &&
+        (error as { name?: string; kind?: string }).name ===
+          "HubtelStatusRequestError" &&
+        (error as { kind?: string }).kind === "no_record",
+    ),
+}));
+
+vi.mock("@/lib/payments/hubtel-no-record", () => ({
+  persistHubtelNoRecordFromStatusError: (...args: unknown[]) =>
+    mockPersistNoRecord(...args),
+  clearHubtelNoRecordLookup: (...args: unknown[]) => mockClearNoRecord(...args),
 }));
 
 vi.mock("@/lib/integrations/paystack/client", () => ({
@@ -93,6 +123,36 @@ describe("Hubtel settlement", () => {
       contribution: null,
     });
     mockCreateAuditLog.mockResolvedValue("audit-1");
+    mockPersistNoRecord.mockResolvedValue(undefined);
+    mockClearNoRecord.mockResolvedValue(undefined);
+  });
+
+  it("does not settle or change status on Hubtel no-record (4720)", async () => {
+    const { HubtelStatusRequestError } = await import("@/lib/integrations/hubtel/status");
+    const pending = makeHubtelPayment({ checkoutAmount: 51, processingFeeAmount: 1 });
+    mockGetPaymentByReference.mockResolvedValue(pending);
+    mockHubtelStatus.mockRejectedValue(
+      new HubtelStatusRequestError(
+        "Your status check did not match any records or your reference is older than a month",
+        {
+          retryable: false,
+          kind: "no_record",
+          responseCode: "4720",
+          httpStatus: 400,
+        },
+      ),
+    );
+
+    await expect(settlePaymentFromHubtelReference(reference)).rejects.toBeInstanceOf(
+      PaymentSettlementError,
+    );
+
+    expect(mockClaimSuccess).not.toHaveBeenCalled();
+    expect(mockClaimFailed).not.toHaveBeenCalled();
+    expect(mockUpdatePaymentStatus).not.toHaveBeenCalled();
+    expect(mockEnsureContributionFromPayment).not.toHaveBeenCalled();
+    expect(mockPersistNoRecord).toHaveBeenCalledTimes(1);
+    expect(mockClearNoRecord).not.toHaveBeenCalled();
   });
 
   it("settles a Paid Hubtel transaction with checkoutAmount and runs contribution automation", async () => {
@@ -124,6 +184,7 @@ describe("Hubtel settlement", () => {
     });
 
     expect(result.outcome).toBe("settled");
+    expect(mockClearNoRecord).toHaveBeenCalledWith(reference);
     expect(mockPaystackVerify).not.toHaveBeenCalled();
     expect(mockClaimSuccess).toHaveBeenCalledWith(
       reference,

@@ -109,20 +109,25 @@ describe("paystack batch navigation component wiring", () => {
     join(process.cwd(), "src/components/admin/reconciliation-overview.tsx"),
     "utf8",
   );
-  const navSource = readFileSync(
+  const paystackNavSource = readFileSync(
     join(process.cwd(), "src/components/admin/paystack-batch-navigation.tsx"),
+    "utf8",
+  );
+  const providerNavSource = readFileSync(
+    join(process.cwd(), "src/components/admin/provider-batch-navigation.tsx"),
     "utf8",
   );
 
   it("uses the loading navigation component instead of bare links", () => {
     expect(overviewSource).toContain("PaystackBatchNavigation");
     expect(overviewSource).not.toContain("paystackBatchPath(");
-    expect(navSource).toContain("Loading batch…");
-    expect(navSource).toContain("Loader2");
-    expect(navSource).toContain('role="status"');
-    expect(navSource).toContain("router.push");
-    expect(navSource).toContain("Retry");
-    expect(navSource).toContain("disabled={ui.previousDisabled}");
-    expect(navSource).toContain("disabled={ui.nextDisabled}");
+    expect(paystackNavSource).toContain("ProviderBatchNavigation");
+    expect(providerNavSource).toContain("Loading batch…");
+    expect(providerNavSource).toContain("Loader2");
+    expect(providerNavSource).toContain('role="status"');
+    expect(providerNavSource).toContain("router.push");
+    expect(providerNavSource).toContain("Retry");
+    expect(providerNavSource).toContain("disabled={ui.previousDisabled}");
+    expect(providerNavSource).toContain("disabled={ui.nextDisabled}");
   });
 });

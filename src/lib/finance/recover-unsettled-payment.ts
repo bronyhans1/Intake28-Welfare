@@ -128,10 +128,11 @@ export async function assessMonthlyDuesRecoveryConflict(
 }
 
 /**
- * Authorized, server-side recovery of an unsettled Paystack success via the
- * shared settlement path. Never trusts browser-supplied eligibility fields.
+ * Authorized, server-side recovery of an unsettled online payment via the
+ * shared provider-aware settlement path. Never trusts browser-supplied
+ * eligibility fields. Routes Hubtel and Paystack by the stored payment provider.
  */
-export async function recoverUnsettledPaystackPayment(
+export async function recoverUnsettledPayment(
   reference: string,
   actor: CurrentUser,
 ): Promise<UnsettledPaymentRecoveryResult> {
@@ -259,7 +260,7 @@ export async function recoverUnsettledPaystackPayment(
         reference: trimmed,
         message:
           settled.message ??
-          "Paystack did not confirm a successful charge. Recovery was not applied.",
+          "The payment provider did not confirm a successful charge. Recovery was not applied.",
         paymentStatus: settled.payment.status,
       };
     }
@@ -364,3 +365,6 @@ export async function recoverUnsettledPaystackPayment(
     };
   }
 }
+
+/** @deprecated Prefer recoverUnsettledPayment — same provider-aware recovery path. */
+export const recoverUnsettledPaystackPayment = recoverUnsettledPayment;

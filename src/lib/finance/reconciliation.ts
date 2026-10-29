@@ -4,11 +4,27 @@ import { getReceiptByPaymentReference, listReceipts } from "@/lib/receipts/repos
 import { loadPaymentsByReference } from "@/lib/payments/repository";
 import { expectedContributionPeriodsForPayment } from "@/lib/payments/contribution-automation";
 import { assessPaystackSettlementMatch } from "@/lib/payments/paystack-settlement-rules";
+import { assessHubtelSettlementMatch } from "@/lib/payments/hubtel-settlement-rules";
+import { resolveExpectedCheckoutAmount } from "@/lib/payments/checkout-amount";
 import {
   paystackVerifyTransaction,
   PaystackConfigurationError,
   PaystackRequestError,
 } from "@/lib/integrations/paystack/client";
+import {
+  hubtelFetchTransactionStatus,
+  HubtelStatusRequestError,
+  isHubtelNoRecordStatusError,
+} from "@/lib/integrations/hubtel/status";
+import {
+  HubtelPaymentConfigurationError,
+  isHubtelPaymentConfigured,
+} from "@/lib/integrations/hubtel/checkout-config";
+import {
+  clearHubtelNoRecordLookup,
+  isHubtelNoRecordSuppressed,
+  persistHubtelNoRecordFromStatusError,
+} from "@/lib/payments/hubtel-no-record";
 import {
   ContributionStatus,
   ContributionType,
@@ -23,42 +39,75 @@ import { COLLECTIONS } from "@/lib/constants";
 import { getAdminDb } from "@/lib/firebase/admin";
 import { serializeFirestoreDoc } from "@/lib/firestore/serialize";
 import {
+  HUBTEL_RECONCILIATION_VERIFY_LIMIT,
   PAYSTACK_RECONCILIATION_PENDING_VERIFY_MS,
   PAYSTACK_RECONCILIATION_VERIFY_LIMIT,
+  resolveOnlineVerificationBatch,
   resolvePaystackVerificationBatch,
+  type HubtelCandidateWindow,
+  type HubtelSettlementMismatch,
+  type HubtelSurplusDuplicateFinding,
+  type HubtelVerificationLimitation,
+  type HubtelVerificationLimitationReason,
   type PaystackCandidateWindow,
   type PaystackSettlementMismatch,
   type PaystackSurplusDuplicateFinding,
   type PaystackVerificationLimitation,
   type PaystackVerificationLimitationReason,
   type ReconciliationSummary,
+  type UnsettledHubtelPaymentFinding,
   type UnsettledPaystackPaymentFinding,
 } from "@/lib/finance/reconciliation-view";
 
 export {
+  HUBTEL_RECONCILIATION_VERIFY_LIMIT,
   PAYSTACK_RECONCILIATION_PENDING_VERIFY_MINUTES,
   PAYSTACK_RECONCILIATION_PENDING_VERIFY_MS,
   PAYSTACK_RECONCILIATION_VERIFY_LIMIT,
+  hubtelBatchPath,
   paystackBatchPath,
   reconciliationStatusMessage,
+  resolveOnlineVerificationBatch,
   resolvePaystackVerificationBatch,
 } from "@/lib/finance/reconciliation-view";
 export type {
+  HubtelCandidateWindow,
+  HubtelSettlementMismatch,
+  HubtelSurplusDuplicateFinding,
+  HubtelVerificationLimitation,
+  HubtelVerificationLimitationReason,
   PaystackCandidateWindow,
   PaystackSettlementMismatch,
   PaystackSurplusDuplicateFinding,
   PaystackVerificationLimitation,
   PaystackVerificationLimitationReason,
   ReconciliationSummary,
+  UnsettledHubtelPaymentFinding,
   UnsettledPaystackPaymentFinding,
 } from "@/lib/finance/reconciliation-view";
 
 const PAYSTACK_RECONCILIATION_TIMEOUT_MS = 8_000;
+const HUBTEL_RECONCILIATION_TIMEOUT_MS = 8_000;
 
 function emptyPaystackWindow(): PaystackCandidateWindow {
   return {
     batch: 1,
     batchSize: PAYSTACK_RECONCILIATION_VERIFY_LIMIT,
+    batchCount: 1,
+    candidateCount: 0,
+    rangeStart: 0,
+    rangeEnd: 0,
+    hasPrevious: false,
+    hasNext: false,
+    uncheckedCount: 0,
+    requestedBatchAdjusted: false,
+  };
+}
+
+function emptyHubtelWindow(): HubtelCandidateWindow {
+  return {
+    batch: 1,
+    batchSize: HUBTEL_RECONCILIATION_VERIFY_LIMIT,
     batchCount: 1,
     candidateCount: 0,
     rangeStart: 0,
@@ -114,6 +163,14 @@ function isPendingEligibleForPaystackVerify(
 
 function isPaystackCandidate(payment: SerializedPayment, now: Date): boolean {
   if (payment.provider !== PaymentProvider.PAYSTACK) return false;
+  if (payment.paymentType === PaymentType.CLAIM_PAYMENT) return false;
+  if (payment.status === PaymentStatus.SUCCESS) return false;
+  if (payment.status === PaymentStatus.ABANDONED) return true;
+  return isPendingEligibleForPaystackVerify(payment, now);
+}
+
+function isHubtelCandidate(payment: SerializedPayment, now: Date): boolean {
+  if (payment.provider !== PaymentProvider.HUBTEL) return false;
   if (payment.paymentType === PaymentType.CLAIM_PAYMENT) return false;
   if (payment.status === PaymentStatus.SUCCESS) return false;
   if (payment.status === PaymentStatus.ABANDONED) return true;
@@ -443,6 +500,280 @@ async function findUnsettledPaystackPayments(
   return result();
 }
 
+function hubtelLimitationMessage(reason: HubtelVerificationLimitationReason): string {
+  switch (reason) {
+    case "unavailable":
+      return "Hubtel verification is unavailable. This payment was not compared with Hubtel.";
+    case "timeout":
+      return "Hubtel verification timed out. This payment was not confirmed.";
+    case "rate_limit":
+      return "Hubtel rate limit reached. This payment was not confirmed.";
+    case "not_checked":
+      return "Hubtel verification stopped before this payment was checked.";
+    case "no_record":
+      return "Hubtel has no matching transaction for this reference (or it is older than one month). This is not treated as a failed payment. Automatic status checks are paused temporarily; use Check status or force a Hubtel recheck to look up again.";
+    default:
+      return "Hubtel verification could not be completed. This payment was not confirmed.";
+  }
+}
+
+function classifyHubtelVerificationError(
+  error: unknown,
+): HubtelVerificationLimitationReason {
+  if (error instanceof HubtelPaymentConfigurationError) return "unavailable";
+  if (isHubtelNoRecordStatusError(error)) return "no_record";
+  if (error instanceof HubtelStatusRequestError && !error.retryable) {
+    return "error";
+  }
+  const message = error instanceof Error ? error.message.toLowerCase() : "";
+  if (message.includes("timed out") || message.includes("timeout")) return "timeout";
+  if (
+    message.includes("rate limit") ||
+    message.includes("too many") ||
+    message.includes("429")
+  ) {
+    return "rate_limit";
+  }
+  if (
+    message.includes("not configured") ||
+    message.includes("unable to reach")
+  ) {
+    return error instanceof HubtelStatusRequestError && error.retryable
+      ? "timeout"
+      : "unavailable";
+  }
+  return "error";
+}
+
+function resolveHubtelForceRecheck(raw: unknown): boolean {
+  const text = Array.isArray(raw) ? raw[0] : raw;
+  if (text == null) return false;
+  if (typeof text === "boolean") return text;
+  if (typeof text === "number") return text === 1;
+  if (typeof text !== "string") return false;
+  const normalized = text.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+async function verifyHubtelReadOnly(reference: string) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      hubtelFetchTransactionStatus(reference),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new HubtelStatusRequestError("Hubtel verification timed out.", {
+            retryable: true,
+          }));
+        }, HUBTEL_RECONCILIATION_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function findUnsettledHubtelPayments(
+  contributionsPromise: Promise<SerializedContribution[]>,
+  now: Date,
+  hubtelBatch: unknown,
+  hubtelForceRecheck: boolean,
+): Promise<
+  Pick<
+    ReconciliationSummary,
+    | "unsettledHubtelPayments"
+    | "hubtelSurplusDuplicatePayments"
+    | "hubtelSettlementMismatches"
+    | "hubtelVerificationLimitations"
+    | "hubtelCandidateWindow"
+  >
+> {
+  const unsettled: UnsettledHubtelPaymentFinding[] = [];
+  const surplusDuplicates: HubtelSurplusDuplicateFinding[] = [];
+  const mismatches: HubtelSettlementMismatch[] = [];
+  const limitations: HubtelVerificationLimitation[] = [];
+  let window = emptyHubtelWindow();
+
+  const result = () => ({
+    unsettledHubtelPayments: { count: unsettled.length, records: unsettled },
+    hubtelSurplusDuplicatePayments: {
+      count: surplusDuplicates.length,
+      records: surplusDuplicates,
+    },
+    hubtelSettlementMismatches: { count: mismatches.length, records: mismatches },
+    hubtelVerificationLimitations: {
+      count: limitations.length,
+      records: limitations,
+    },
+    hubtelCandidateWindow: window,
+  });
+
+  if (!isHubtelPaymentConfigured()) {
+    limitations.push({
+      reference: null,
+      portalStatus: null,
+      reason: "unavailable",
+      message:
+        "Hubtel verification is unavailable. Unsettled Hubtel payments were not compared with Hubtel.",
+    });
+    return result();
+  }
+
+  const [abandoned, pending] = await Promise.all([
+    fetchPaymentsByStatus(PaymentStatus.ABANDONED),
+    fetchPaymentsByStatus(PaymentStatus.PENDING),
+  ]);
+
+  const candidates = [...abandoned, ...pending]
+    .filter((payment) => isHubtelCandidate(payment, now))
+    .sort((left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt));
+
+  const resolved = resolveOnlineVerificationBatch(hubtelBatch, candidates.length);
+  const start = (resolved.batch - 1) * HUBTEL_RECONCILIATION_VERIFY_LIMIT;
+  const selected = candidates.slice(start, start + HUBTEL_RECONCILIATION_VERIFY_LIMIT);
+  const uncheckedCount = candidates.length - selected.length;
+  window = {
+    batch: resolved.batch,
+    batchSize: HUBTEL_RECONCILIATION_VERIFY_LIMIT,
+    batchCount: resolved.batchCount,
+    candidateCount: candidates.length,
+    rangeStart: selected.length === 0 ? 0 : start + 1,
+    rangeEnd: start + selected.length,
+    hasPrevious: resolved.batch > 1,
+    hasNext: resolved.batch < resolved.batchCount,
+    uncheckedCount,
+    requestedBatchAdjusted: resolved.adjusted,
+  };
+
+  if (uncheckedCount > 0) {
+    limitations.push({
+      reference: null,
+      portalStatus: null,
+      reason: "not_checked",
+      message: `Batch ${resolved.batch} of ${resolved.batchCount} checked eligible Hubtel payments ${window.rangeStart}–${window.rangeEnd} of ${candidates.length}, oldest first. ${uncheckedCount} eligible Hubtel payments are outside this batch and were not sent to Hubtel. Open another Hubtel batch to check them.`,
+    });
+  }
+
+  let stopReason: HubtelVerificationLimitationReason | null = null;
+  const verified: Array<{
+    payment: SerializedPayment;
+    verification: Awaited<ReturnType<typeof verifyHubtelReadOnly>>;
+  }> = [];
+
+  for (const payment of selected) {
+    if (stopReason) {
+      limitations.push({
+        reference: payment.reference,
+        portalStatus: payment.status,
+        reason: stopReason,
+        message: hubtelLimitationMessage(stopReason),
+      });
+      continue;
+    }
+
+    if (!hubtelForceRecheck && isHubtelNoRecordSuppressed(payment, now)) {
+      limitations.push({
+        reference: payment.reference,
+        portalStatus: payment.status,
+        reason: "no_record",
+        message: hubtelLimitationMessage("no_record"),
+      });
+      continue;
+    }
+
+    try {
+      const verification = await verifyHubtelReadOnly(payment.reference);
+      if (
+        payment.hubtelNoRecordCheckedAt != null ||
+        payment.hubtelNoRecordResponseCode != null
+      ) {
+        await clearHubtelNoRecordLookup(payment.reference);
+      }
+      verified.push({ payment, verification });
+    } catch (error) {
+      const reason = classifyHubtelVerificationError(error);
+      if (isHubtelNoRecordStatusError(error)) {
+        await persistHubtelNoRecordFromStatusError(
+          payment.reference,
+          error,
+          hubtelForceRecheck ? "reconciliation_recheck" : "reconciliation",
+        );
+      }
+      limitations.push({
+        reference: payment.reference,
+        portalStatus: payment.status,
+        reason,
+        message: hubtelLimitationMessage(reason),
+      });
+      if (reason === "unavailable" || reason === "rate_limit") {
+        stopReason = reason;
+      }
+    }
+  }
+
+  const contributions = await contributionsPromise;
+
+  for (const { payment, verification } of verified) {
+    const match = assessHubtelSettlementMatch(payment, verification);
+    const expectedCheckoutAmount = resolveExpectedCheckoutAmount(payment);
+    if (!match.consistent) {
+      if (match.issue !== "status") {
+        mismatches.push({
+          reference: payment.reference,
+          portalStatus: payment.status,
+          hubtelStatus: verification.status,
+          expectedAmount: payment.amount,
+          expectedCheckoutAmount,
+          currency: payment.currency,
+          issue: match.issue,
+        });
+      }
+      continue;
+    }
+
+    const missingContributions = describeMissingContributions(payment, contributions);
+    if (!missingContributions) continue;
+
+    const surplus = findSurplusDuplicateCoverage(payment, contributions);
+    if (surplus) {
+      surplusDuplicates.push({
+        reference: payment.reference,
+        memberId: payment.memberId,
+        serviceNumber: payment.serviceNumber ?? null,
+        portalStatus: payment.status,
+        hubtelStatus: verification.status,
+        expectedAmount: payment.amount,
+        expectedCheckoutAmount,
+        currency: payment.currency,
+        periodLabel: surplus.periodLabel,
+        existingPaymentReference: surplus.existingPaymentReference,
+      });
+      continue;
+    }
+
+    const periods = expectedContributionPeriodsForPayment(payment);
+    unsettled.push({
+      reference: payment.reference,
+      portalStatus: payment.status,
+      hubtelStatus: verification.status,
+      expectedAmount: payment.amount,
+      expectedCheckoutAmount,
+      currency: payment.currency,
+      missingContributions,
+      memberId: payment.memberId,
+      memberName: payment.memberName,
+      serviceNumber: payment.serviceNumber ?? null,
+      paymentType: payment.paymentType,
+      periodLabel:
+        periods.length > 0
+          ? periods.map((period) => formatMonthYearLabel(period)).join(", ")
+          : missingContributions,
+    });
+  }
+
+  return result();
+}
+
 async function assembleLocalFindings(
   successPaymentsPromise: Promise<SerializedPayment[]>,
   contributionsPromise: Promise<SerializedContribution[]>,
@@ -496,25 +827,41 @@ async function assembleLocalFindings(
 
 export async function getReconciliationSummary(options?: {
   paystackBatch?: unknown;
+  hubtelBatch?: unknown;
+  /** When true, bypass no-record suppression and call Hubtel again for this batch. */
+  hubtelForceRecheck?: unknown;
 }): Promise<ReconciliationSummary> {
   const contributionsPromise = fetchAllContributionsForReport({});
   const successPaymentsPromise = fetchAllSuccessPayments();
   const receiptsPromise = listReceipts({ page: 1, pageSize: 10_000 });
   const paymentsByReferencePromise = loadPaymentsByReference();
-  const paystackPromise = findUnsettledPaystackPayments(
-    contributionsPromise,
-    new Date(),
-    options?.paystackBatch,
-  );
+  const now = new Date();
+  const hubtelForceRecheck = resolveHubtelForceRecheck(options?.hubtelForceRecheck);
+  const providerPromise = Promise.all([
+    findUnsettledPaystackPayments(
+      contributionsPromise,
+      now,
+      options?.paystackBatch,
+    ),
+    findUnsettledHubtelPayments(
+      contributionsPromise,
+      now,
+      options?.hubtelBatch,
+      hubtelForceRecheck,
+    ),
+  ]).then(([paystackFindings, hubtelFindings]) => ({
+    ...paystackFindings,
+    ...hubtelFindings,
+  }));
 
-  const [localFindings, paystackFindings] = await awaitBoth(
+  const [localFindings, providerFindings] = await awaitBoth(
     assembleLocalFindings(
       successPaymentsPromise,
       contributionsPromise,
       receiptsPromise,
       paymentsByReferencePromise,
     ),
-    paystackPromise,
+    providerPromise,
   );
 
   const summary: ReconciliationSummary = {
@@ -530,14 +877,17 @@ export async function getReconciliationSummary(options?: {
       count: localFindings.receiptsMissingPayments.length,
       records: localFindings.receiptsMissingPayments,
     },
-    ...paystackFindings,
+    ...providerFindings,
     isBalanced:
       localFindings.paymentsMissingContributions.length === 0 &&
       localFindings.contributionsMissingReceipts.length === 0 &&
       localFindings.receiptsMissingPayments.length === 0 &&
-      paystackFindings.unsettledPaystackPayments.count === 0 &&
-      paystackFindings.paystackSurplusDuplicatePayments.count === 0 &&
-      paystackFindings.paystackSettlementMismatches.count === 0,
+      providerFindings.unsettledPaystackPayments.count === 0 &&
+      providerFindings.paystackSurplusDuplicatePayments.count === 0 &&
+      providerFindings.paystackSettlementMismatches.count === 0 &&
+      providerFindings.unsettledHubtelPayments.count === 0 &&
+      providerFindings.hubtelSurplusDuplicatePayments.count === 0 &&
+      providerFindings.hubtelSettlementMismatches.count === 0,
   };
 
   return summary;

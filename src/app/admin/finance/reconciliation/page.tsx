@@ -41,12 +41,14 @@ export default async function AdminReconciliationPage({
   const params = await searchParams;
   const summary = await getReconciliationSummary({
     paystackBatch: params.paystackBatch,
+    hubtelBatch: params.hubtelBatch,
+    hubtelForceRecheck: params.hubtelRecheck,
   });
 
   return (
     <AdminPageShell
       title="Financial Reconciliation"
-      description="Detect gaps between successful payments, automated contributions, issued receipts, and Paystack charges that are still unsettled."
+      description="Detect gaps between successful payments, automated contributions, issued receipts, and Paystack or Hubtel charges that are still unsettled."
     >
       <ReconciliationOverview
         summary={summary}

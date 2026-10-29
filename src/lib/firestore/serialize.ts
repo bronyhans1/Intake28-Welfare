@@ -27,6 +27,7 @@ const TIMESTAMP_FIELDS = new Set([
   "maturityDate",
   "lastSuccessfulContributionDate",
   "lastCalculatedAt",
+  "hubtelNoRecordCheckedAt",
 ]);
 
 export function isFirestoreTimestamp(value: unknown): value is Timestamp {

@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import {
   assessMonthlyDuesRecoveryConflict,
+  recoverUnsettledPayment,
   recoverUnsettledPaystackPayment,
 } from "@/lib/finance/recover-unsettled-payment";
 import { PaymentSettlementError } from "@/lib/payments/settlement";
 import {
   ContributionStatus,
   ContributionType,
+  PaymentProvider,
   PaymentStatus,
   PaymentType,
   UserRole,
@@ -98,7 +100,7 @@ const memberActor: CurrentUser = {
   serviceNumber: "IS/12003",
 };
 
-describe("recoverUnsettledPaystackPayment", () => {
+describe("recoverUnsettledPayment", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFindPaid.mockResolvedValue(null);
@@ -116,7 +118,36 @@ describe("recoverUnsettledPaystackPayment", () => {
       message: "Payment settled successfully.",
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
+
+    expect(result.outcome).toBe("recovered");
+    expect(mockSettle).toHaveBeenCalledWith(reference, {
+      actor: adminActor,
+      source: "recovery",
+    });
+    expect(mockCreateAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: PaymentAuditAction.PAYMENT_RECOVERY,
+        entityId: reference,
+        metadata: expect.objectContaining({ outcome: "recovered" }),
+      }),
+    );
+  });
+
+  it("routes Hubtel references through settlePaymentByReference without provider-specific recovery", async () => {
+    const payment = makePayment({
+      provider: PaymentProvider.HUBTEL,
+      checkoutAmount: 51,
+      processingFeeAmount: 1,
+    });
+    mockGetPaymentByReference.mockResolvedValue(payment);
+    mockSettle.mockResolvedValue({
+      outcome: "settled",
+      payment: { ...payment, status: PaymentStatus.SUCCESS },
+      message: "Payment settled successfully.",
+    });
+
+    const result = await recoverUnsettledPayment(reference, adminActor);
 
     expect(result.outcome).toBe("recovered");
     expect(mockSettle).toHaveBeenCalledWith(reference, {
@@ -159,7 +190,7 @@ describe("recoverUnsettledPaystackPayment", () => {
     mockGetPaymentByReference.mockResolvedValue(makePayment());
     mockSettle.mockRejectedValue(new PaymentSettlementError("Paystack verification timed out."));
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("verification_failed");
     expect(result.message).toMatch(/timed out/i);
   });
@@ -173,7 +204,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       message: "Paystack reported status: failed.",
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("verification_failed");
     expect(mockSettle).toHaveBeenCalled();
   });
@@ -184,7 +215,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       new PaymentSettlementError("Paystack amount does not match the expected payment amount."),
     );
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("verification_failed");
     expect(result.message).toMatch(/amount/i);
   });
@@ -208,7 +239,7 @@ describe("recoverUnsettledPaystackPayment", () => {
     ]);
     mockGetReceipt.mockResolvedValue({ id: reference, paymentReference: reference });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("already_settled");
     expect(mockSettle).toHaveBeenCalledWith(reference, {
       actor: adminActor,
@@ -228,7 +259,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       contributionType: ContributionType.MONTHLY_DUES,
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("ineligible_surplus");
     expect(mockSettle).not.toHaveBeenCalled();
     expect(result.message).toContain("GIS-OTHER-REF");
@@ -290,7 +321,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       .mockResolvedValueOnce({ ...payment, status: PaymentStatus.SUCCESS });
     mockSettle.mockRejectedValue(new Error("contribution write failed"));
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("manual_review");
     expect(result.message).toMatch(/successful/i);
   });
@@ -299,7 +330,7 @@ describe("recoverUnsettledPaystackPayment", () => {
     mockGetPaymentByReference.mockResolvedValue(
       makePayment({ paymentType: PaymentType.CLAIM_PAYMENT }),
     );
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("ineligible");
     expect(mockSettle).not.toHaveBeenCalled();
   });
@@ -322,7 +353,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       payment,
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("already_settled");
     expect(mockSettle).toHaveBeenCalledWith(reference, {
       actor: adminActor,
@@ -340,7 +371,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       payment,
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("already_settled");
     expect(mockSettle).toHaveBeenCalled();
   });
@@ -356,7 +387,7 @@ describe("recoverUnsettledPaystackPayment", () => {
       status: ContributionStatus.PAID,
     });
 
-    const result = await recoverUnsettledPaystackPayment(reference, adminActor);
+    const result = await recoverUnsettledPayment(reference, adminActor);
     expect(result.outcome).toBe("ineligible_surplus");
     expect(mockSettle).not.toHaveBeenCalled();
   });
@@ -418,18 +449,33 @@ describe("recovery UI boundaries", () => {
       join(process.cwd(), "src/components/admin/reconciliation-overview.tsx"),
       "utf8",
     );
-    const surplusIndex = overview.indexOf("Potential Surplus Or Duplicate Paystack Charges");
-    const limitationsIndex = overview.indexOf("Paystack Verification Not Completed");
-    const unsettledIndex = overview.indexOf("Unsettled Paystack Successes");
-    const recoverImport = overview.indexOf("RecoverUnsettledPaymentButton");
-    expect(unsettledIndex).toBeGreaterThan(-1);
-    expect(recoverImport).toBeGreaterThan(-1);
-    expect(overview.indexOf("<RecoverUnsettledPaymentButton")).toBeGreaterThan(unsettledIndex);
-    expect(overview.indexOf("<RecoverUnsettledPaymentButton")).toBeLessThan(surplusIndex);
-    expect(overview.slice(surplusIndex, limitationsIndex)).not.toContain(
+    const paystackUnsettledIndex = overview.indexOf("Unsettled Paystack Successes");
+    const hubtelUnsettledIndex = overview.indexOf("Unsettled Hubtel Successes");
+    const paystackSurplusIndex = overview.indexOf(
+      "Potential Surplus Or Duplicate Paystack Charges",
+    );
+    const hubtelSurplusIndex = overview.indexOf(
+      "Potential Surplus Or Duplicate Hubtel Charges",
+    );
+    const paystackLimitationsIndex = overview.indexOf("Paystack Verification Not Completed");
+    const hubtelLimitationsIndex = overview.indexOf("Hubtel Verification Not Completed");
+    expect(paystackUnsettledIndex).toBeGreaterThan(-1);
+    expect(hubtelUnsettledIndex).toBeGreaterThan(-1);
+    expect(overview.indexOf("<RecoverUnsettledPaymentButton")).toBeGreaterThan(
+      paystackUnsettledIndex,
+    );
+    expect(overview.slice(paystackSurplusIndex, paystackLimitationsIndex)).not.toContain(
       "RecoverUnsettledPaymentButton",
     );
-    expect(overview.slice(limitationsIndex)).not.toContain("RecoverUnsettledPaymentButton");
+    expect(overview.slice(hubtelSurplusIndex, hubtelLimitationsIndex)).not.toContain(
+      "RecoverUnsettledPaymentButton",
+    );
+    expect(overview.slice(paystackLimitationsIndex, hubtelLimitationsIndex)).not.toContain(
+      "RecoverUnsettledPaymentButton",
+    );
+    expect(overview.slice(hubtelLimitationsIndex)).not.toContain(
+      "RecoverUnsettledPaymentButton",
+    );
   });
 
   it("keeps recover dialog description free of invalid nested block markup", async () => {
@@ -442,7 +488,7 @@ describe("recovery UI boundaries", () => {
     expect(source).toContain("AlertDialogDescription");
     expect(source).not.toContain("AlertDialogDescription asChild");
     expect(source).toContain(
-      "This recovers a historical Paystack charge by verifying it again on the server",
+      "This recovers a historical ${providerLabel} charge by verifying it again on the server",
     );
     expect(source).toContain("<dl");
     const descriptionStart = source.indexOf("<AlertDialogDescription>");
@@ -453,5 +499,9 @@ describe("recovery UI boundaries", () => {
     expect(descriptionBody).not.toContain("<div");
     expect(descriptionBody).not.toContain("<p>");
     expect(descriptionBody).not.toContain("<dl");
+  });
+
+  it("aliases recoverUnsettledPaystackPayment to the provider-aware recovery path", () => {
+    expect(recoverUnsettledPaystackPayment).toBe(recoverUnsettledPayment);
   });
 });

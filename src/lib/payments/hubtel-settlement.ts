@@ -3,6 +3,7 @@ import { buildAuditActor } from "@/lib/audit/actor";
 import {
   hubtelFetchTransactionStatus,
   HubtelStatusRequestError,
+  isHubtelNoRecordStatusError,
 } from "@/lib/integrations/hubtel/status";
 import { PaymentAuditAction } from "@/lib/payments/audit";
 import { ensureContributionFromPayment } from "@/lib/payments/contribution-automation";
@@ -11,6 +12,10 @@ import {
   validateHubtelCurrency,
   validateHubtelReference,
 } from "@/lib/payments/hubtel-settlement-rules";
+import {
+  clearHubtelNoRecordLookup,
+  persistHubtelNoRecordFromStatusError,
+} from "@/lib/payments/hubtel-no-record";
 import { abandonStalePendingPayments } from "@/lib/payments/lifecycle";
 import { PaymentSettlementError } from "@/lib/payments/paystack-settlement-rules";
 import type {
@@ -105,6 +110,19 @@ export async function settlePaymentFromHubtelReference(
   try {
     verification = await hubtelFetchTransactionStatus(trimmedReference);
   } catch (error) {
+    if (isHubtelNoRecordStatusError(error)) {
+      // Manual Check status always hits Hubtel; record definitive no-record only.
+      // Never invent SUCCESS/FAILED from 4720 alone.
+      await persistHubtelNoRecordFromStatusError(
+        trimmedReference,
+        error,
+        "verify",
+        actor,
+      );
+      throw new PaymentSettlementError(error.message, {
+        retryable: false,
+      });
+    }
     if (error instanceof HubtelStatusRequestError) {
       throw new PaymentSettlementError(error.message, {
         retryable: error.retryable,
@@ -112,6 +130,8 @@ export async function settlePaymentFromHubtelReference(
     }
     throw error;
   }
+
+  await clearHubtelNoRecordLookup(trimmedReference);
 
   validateHubtelReference(trimmedReference, verification.clientReference);
 

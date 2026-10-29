@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { PaystackBatchNavigation } from "@/components/admin/paystack-batch-navigation";
+import { ProviderBatchNavigation } from "@/components/admin/provider-batch-navigation";
 import { RecoverUnsettledPaymentButton } from "@/components/admin/recover-unsettled-payment-button";
 import {
   reconciliationStatusMessage,
@@ -53,6 +54,10 @@ export function ReconciliationOverview({
   summary,
   canRecoverUnsettledPayments = false,
 }: ReconciliationOverviewProps) {
+  const surplusDuplicateCount =
+    summary.paystackSurplusDuplicatePayments.count +
+    summary.hubtelSurplusDuplicatePayments.count;
+
   return (
     <div className="space-y-6">
       <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
@@ -60,7 +65,7 @@ export function ReconciliationOverview({
           <CardTitle>Reconciliation Status</CardTitle>
           <CardDescription>{reconciliationStatusMessage(summary)}</CardDescription>
         </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3">
           <div className="rounded-xl border border-black/[0.06] p-4">
             <p className="text-sm text-muted-foreground">Payments Missing Contributions</p>
             <div className="mt-2">
@@ -89,10 +94,18 @@ export function ReconciliationOverview({
           </div>
           <div className="rounded-xl border border-black/[0.06] p-4">
             <p className="text-sm text-muted-foreground">
+              Unsettled Hubtel Successes
+            </p>
+            <div className="mt-2">
+              <IssueCount count={summary.unsettledHubtelPayments.count} />
+            </div>
+          </div>
+          <div className="rounded-xl border border-black/[0.06] p-4">
+            <p className="text-sm text-muted-foreground">
               Potential Surplus / Duplicate Charges
             </p>
             <div className="mt-2">
-              <IssueCount count={summary.paystackSurplusDuplicatePayments.count} />
+              <IssueCount count={surplusDuplicateCount} />
             </div>
           </div>
         </CardContent>
@@ -208,6 +221,40 @@ export function ReconciliationOverview({
               batch={summary.paystackCandidateWindow.batch}
               hasPrevious={summary.paystackCandidateWindow.hasPrevious}
               hasNext={summary.paystackCandidateWindow.hasNext}
+              companionHubtelBatch={summary.hubtelCandidateWindow.batch}
+            />
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {summary.hubtelCandidateWindow.candidateCount > 0 ? (
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>Hubtel Verification Batch</CardTitle>
+            <CardDescription>
+              Batch {summary.hubtelCandidateWindow.batch} of{" "}
+              {summary.hubtelCandidateWindow.batchCount}. Eligible Hubtel payments{" "}
+              {summary.hubtelCandidateWindow.rangeStart}–
+              {summary.hubtelCandidateWindow.rangeEnd} of{" "}
+              {summary.hubtelCandidateWindow.candidateCount}, oldest first.
+              {summary.hubtelCandidateWindow.uncheckedCount > 0
+                ? ` ${summary.hubtelCandidateWindow.uncheckedCount} eligible Hubtel payments were not sent to Hubtel in this batch.`
+                : " Every current eligible Hubtel payment is in this batch."}{" "}
+              Reloading repeats this batch. Use the next or previous Hubtel batch to
+              inspect the others. New or settled payments can shift which
+              references fall in each batch.
+              {summary.hubtelCandidateWindow.requestedBatchAdjusted
+                ? " The requested batch was not valid for the current list, so this batch is shown instead."
+                : ""}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ProviderBatchNavigation
+              provider="hubtel"
+              batch={summary.hubtelCandidateWindow.batch}
+              hasPrevious={summary.hubtelCandidateWindow.hasPrevious}
+              hasNext={summary.hubtelCandidateWindow.hasNext}
+              companionBatch={summary.paystackCandidateWindow.batch}
             />
           </CardContent>
         </Card>
@@ -258,6 +305,68 @@ export function ReconciliationOverview({
                           paymentType={finding.paymentType}
                           periodLabel={finding.periodLabel}
                           portalStatus={finding.portalStatus}
+                          providerLabel="Paystack"
+                        />
+                      </TableCell>
+                    ) : null}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {summary.unsettledHubtelPayments.count > 0 ? (
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>Unsettled Hubtel Successes</CardTitle>
+            <CardDescription>
+              Hubtel confirmed these charges and the portal contribution
+              records are missing or incomplete. An authorized administrator
+              should review each transaction and recover it with the existing
+              approved settlement process. Checkout totals may include the
+              processing fee; recovery credits only the official contribution
+              amount. This page does not settle payments until Recover is used.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Hubtel Status</TableHead>
+                  <TableHead>Contribution</TableHead>
+                  <TableHead>Checkout Total</TableHead>
+                  <TableHead>Missing Contribution</TableHead>
+                  {canRecoverUnsettledPayments ? <TableHead>Action</TableHead> : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.unsettledHubtelPayments.records.map((finding) => (
+                  <TableRow key={finding.reference}>
+                    <TableCell>{finding.reference}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.hubtelStatus]}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedCheckoutAmount)}</TableCell>
+                    <TableCell className="max-w-xl whitespace-normal break-words">
+                      {finding.missingContributions}
+                    </TableCell>
+                    {canRecoverUnsettledPayments ? (
+                      <TableCell>
+                        <RecoverUnsettledPaymentButton
+                          reference={finding.reference}
+                          memberLabel={
+                            finding.serviceNumber ?? finding.memberName ?? finding.memberId
+                          }
+                          amount={finding.expectedAmount}
+                          currency={finding.currency}
+                          paymentType={finding.paymentType}
+                          periodLabel={finding.periodLabel}
+                          portalStatus={finding.portalStatus}
+                          providerLabel="Hubtel"
                         />
                       </TableCell>
                     ) : null}
@@ -313,6 +422,52 @@ export function ReconciliationOverview({
         </Card>
       ) : null}
 
+      {summary.hubtelSurplusDuplicatePayments.count > 0 ? (
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>Potential Surplus Or Duplicate Hubtel Charges</CardTitle>
+            <CardDescription>
+              Hubtel confirmed these charges, but the monthly-dues period is
+              already recorded as PAID against a different payment reference.
+              These are not missing contributions. Do not create another
+              contribution, receipt, or welfare point from this page. Financial
+              disposition requires separate authorized review. This page does
+              not settle or refund payments.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Member</TableHead>
+                  <TableHead>Surplus Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Hubtel Status</TableHead>
+                  <TableHead>Contribution</TableHead>
+                  <TableHead>Checkout Total</TableHead>
+                  <TableHead>Period</TableHead>
+                  <TableHead>Existing Paid Reference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.hubtelSurplusDuplicatePayments.records.map((finding) => (
+                  <TableRow key={finding.reference}>
+                    <TableCell>{finding.serviceNumber ?? finding.memberId}</TableCell>
+                    <TableCell>{finding.reference}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.hubtelStatus]}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedCheckoutAmount)}</TableCell>
+                    <TableCell>{finding.periodLabel}</TableCell>
+                    <TableCell>{finding.existingPaymentReference}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {summary.paystackSettlementMismatches.count > 0 ? (
         <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
           <CardHeader>
@@ -351,6 +506,46 @@ export function ReconciliationOverview({
         </Card>
       ) : null}
 
+      {summary.hubtelSettlementMismatches.count > 0 ? (
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>Hubtel Amount Or Currency Differences</CardTitle>
+            <CardDescription>
+              Hubtel reported success, but the checkout amount, currency, or
+              reference does not match settlement rules. These are confirmed
+              differences, not unverified payments. Do not run settlement until
+              they are reviewed.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Hubtel Status</TableHead>
+                  <TableHead>Contribution</TableHead>
+                  <TableHead>Expected Checkout</TableHead>
+                  <TableHead>Difference</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.hubtelSettlementMismatches.records.map((finding) => (
+                  <TableRow key={`${finding.reference}-${finding.issue}`}>
+                    <TableCell>{finding.reference}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.portalStatus]}</TableCell>
+                    <TableCell>{PAYMENT_STATUS_LABELS[finding.hubtelStatus]}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedAmount)}</TableCell>
+                    <TableCell>{formatCurrency(finding.expectedCheckoutAmount)}</TableCell>
+                    <TableCell>{finding.issue}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
       {summary.paystackVerificationLimitations.count > 0 ? (
         <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
           <CardHeader>
@@ -371,6 +566,47 @@ export function ReconciliationOverview({
               </TableHeader>
               <TableBody>
                 {summary.paystackVerificationLimitations.records.map((finding, index) => (
+                  <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
+                    <TableCell>{finding.reference ?? "—"}</TableCell>
+                    <TableCell>
+                      {finding.portalStatus
+                        ? PAYMENT_STATUS_LABELS[finding.portalStatus]
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="max-w-xl whitespace-normal break-words">
+                      {finding.message}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {summary.hubtelVerificationLimitations.count > 0 ? (
+        <Card className="rounded-2xl border border-black/[0.08] bg-white shadow-sm">
+          <CardHeader>
+            <CardTitle>Hubtel Verification Not Completed</CardTitle>
+            <CardDescription>
+              These records could not be verified with Hubtel. Their final
+              payment outcome is unknown. No-record responses mean Hubtel has no
+              matching transaction—they are not confirmed mismatches, failed
+              payments, or proof that a member was not charged. Use Check status
+              or ?hubtelRecheck=1 for a fresh lookup.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Portal Status</TableHead>
+                  <TableHead>Limitation</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {summary.hubtelVerificationLimitations.records.map((finding, index) => (
                   <TableRow key={`${finding.reference ?? "general"}-${finding.reason}-${index}`}>
                     <TableCell>{finding.reference ?? "—"}</TableCell>
                     <TableCell>

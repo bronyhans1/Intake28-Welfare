@@ -15,7 +15,7 @@ vi.mock("@/lib/firebase/admin", () => ({
 }));
 
 vi.mock("@/lib/finance/recover-unsettled-payment", () => ({
-  recoverUnsettledPaystackPayment: (...args: unknown[]) => mockRecover(...args),
+  recoverUnsettledPayment: (...args: unknown[]) => mockRecover(...args),
 }));
 
 vi.mock("next/cache", () => ({

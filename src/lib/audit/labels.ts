@@ -73,6 +73,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   [PaymentAuditAction.PAYMENT_RECOVERY]: "Payment recovered",
   [PaymentAuditAction.PAYMENT_WEBHOOK_OUTCOME]: "Paystack webhook outcome",
   [PaymentAuditAction.PAYMENT_CALLBACK_OUTCOME]: "Paystack callback outcome",
+  [PaymentAuditAction.PAYMENT_HUBTEL_STATUS_LOOKUP]: "Hubtel status lookup",
   [ReceiptAuditAction.RECEIPT_GENERATED]: "Receipt generated",
   [ReceiptAuditAction.RECEIPT_DOWNLOADED]: "Receipt downloaded",
   [ReceiptAuditAction.RECEIPT_CANCELLED]: "Receipt cancelled",
@@ -513,6 +514,19 @@ export function formatAuditDescription(
       return `${channel} ${outcome.replace(/_/g, " ")}${refLabel}`;
     }
     return `${channel} outcome${refLabel}`;
+  }
+
+  if (action === PaymentAuditAction.PAYMENT_HUBTEL_STATUS_LOOKUP) {
+    const outcome = typeof metadata?.outcome === "string" ? metadata.outcome : null;
+    const responseCode =
+      typeof metadata?.responseCode === "string" ? metadata.responseCode : null;
+    const source = typeof metadata?.source === "string" ? metadata.source : null;
+    const parts = [
+      outcome ? outcome.replace(/_/g, " ") : "lookup",
+      responseCode ? `code ${responseCode}` : null,
+      source ? `via ${source.replace(/_/g, " ")}` : null,
+    ].filter(Boolean);
+    return `Hubtel status ${parts.join(" · ")}`;
   }
 
   if (action === PaymentAuditAction.PAYMENT_CONTRIBUTION_CREATED) {

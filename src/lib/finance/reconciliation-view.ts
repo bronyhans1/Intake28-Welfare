@@ -82,6 +82,65 @@ export interface PaystackCandidateWindow {
   requestedBatchAdjusted: boolean;
 }
 
+/** Same batch size / pending age policy as Paystack reconciliation. */
+export const HUBTEL_RECONCILIATION_VERIFY_LIMIT =
+  PAYSTACK_RECONCILIATION_VERIFY_LIMIT;
+export const HUBTEL_RECONCILIATION_PENDING_VERIFY_MS =
+  PAYSTACK_RECONCILIATION_PENDING_VERIFY_MS;
+
+export interface UnsettledHubtelPaymentFinding {
+  reference: string;
+  portalStatus: PaymentStatus;
+  hubtelStatus: PaymentStatus;
+  /** Official welfare contribution amount (ledger). */
+  expectedAmount: number;
+  /** Gross Hubtel checkout amount used for provider verification. */
+  expectedCheckoutAmount: number;
+  currency: string;
+  missingContributions: string;
+  memberId: string;
+  memberName: string;
+  serviceNumber: string | null;
+  paymentType: string;
+  periodLabel: string;
+}
+
+export interface HubtelSurplusDuplicateFinding {
+  reference: string;
+  memberId: string;
+  serviceNumber: string | null;
+  portalStatus: PaymentStatus;
+  hubtelStatus: PaymentStatus;
+  expectedAmount: number;
+  expectedCheckoutAmount: number;
+  currency: string;
+  periodLabel: string;
+  existingPaymentReference: string;
+}
+
+export type HubtelVerificationLimitationReason =
+  | PaystackVerificationLimitationReason
+  | "no_record";
+
+export interface HubtelVerificationLimitation {
+  reference: string | null;
+  portalStatus: PaymentStatus | null;
+  reason: HubtelVerificationLimitationReason;
+  message: string;
+}
+
+export interface HubtelSettlementMismatch {
+  reference: string;
+  portalStatus: PaymentStatus;
+  hubtelStatus: PaymentStatus;
+  expectedAmount: number;
+  expectedCheckoutAmount: number;
+  currency: string;
+  issue: "amount" | "currency" | "reference";
+}
+
+export type HubtelCandidateWindow = PaystackCandidateWindow;
+
 export interface ReconciliationSummary {
   paymentsMissingContributions: {
     count: number;
@@ -112,6 +171,23 @@ export interface ReconciliationSummary {
     records: PaystackVerificationLimitation[];
   };
   paystackCandidateWindow: PaystackCandidateWindow;
+  unsettledHubtelPayments: {
+    count: number;
+    records: UnsettledHubtelPaymentFinding[];
+  };
+  hubtelSurplusDuplicatePayments: {
+    count: number;
+    records: HubtelSurplusDuplicateFinding[];
+  };
+  hubtelSettlementMismatches: {
+    count: number;
+    records: HubtelSettlementMismatch[];
+  };
+  hubtelVerificationLimitations: {
+    count: number;
+    records: HubtelVerificationLimitation[];
+  };
+  hubtelCandidateWindow: HubtelCandidateWindow;
   isBalanced: boolean;
 }
 
@@ -149,12 +225,42 @@ export function resolvePaystackVerificationBatch(
   return { batch: parsed, batchCount, adjusted: false };
 }
 
-export function paystackBatchPath(batch: number): string {
-  if (!Number.isInteger(batch) || batch <= 1) {
-    return "/admin/finance/reconciliation";
+/** Build reconciliation URL preserving both provider batch query params when > 1. */
+export function reconciliationBatchPath(options: {
+  paystackBatch?: number;
+  hubtelBatch?: number;
+}): string {
+  const params = new URLSearchParams();
+  if (
+    options.paystackBatch != null &&
+    Number.isInteger(options.paystackBatch) &&
+    options.paystackBatch > 1
+  ) {
+    params.set("paystackBatch", String(options.paystackBatch));
   }
-  return `/admin/finance/reconciliation?paystackBatch=${batch}`;
+  if (
+    options.hubtelBatch != null &&
+    Number.isInteger(options.hubtelBatch) &&
+    options.hubtelBatch > 1
+  ) {
+    params.set("hubtelBatch", String(options.hubtelBatch));
+  }
+  const query = params.toString();
+  return query
+    ? `/admin/finance/reconciliation?${query}`
+    : "/admin/finance/reconciliation";
 }
+
+export function paystackBatchPath(batch: number, hubtelBatch?: number): string {
+  return reconciliationBatchPath({ paystackBatch: batch, hubtelBatch });
+}
+
+export function hubtelBatchPath(batch: number, paystackBatch?: number): string {
+  return reconciliationBatchPath({ hubtelBatch: batch, paystackBatch });
+}
+
+/** Shared 1-based batch selector for Paystack and Hubtel candidate windows. */
+export const resolveOnlineVerificationBatch = resolvePaystackVerificationBatch;
 
 export function reconciliationStatusMessage(
   summary: Pick<
@@ -164,18 +270,28 @@ export function reconciliationStatusMessage(
     | "paystackSurplusDuplicatePayments"
     | "paystackSettlementMismatches"
     | "paystackVerificationLimitations"
+    | "unsettledHubtelPayments"
+    | "hubtelSurplusDuplicatePayments"
+    | "hubtelSettlementMismatches"
+    | "hubtelVerificationLimitations"
   >,
 ): string {
   if (
     !summary.isBalanced ||
     summary.unsettledPaystackPayments.count > 0 ||
     summary.paystackSurplusDuplicatePayments.count > 0 ||
-    summary.paystackSettlementMismatches.count > 0
+    summary.paystackSettlementMismatches.count > 0 ||
+    summary.unsettledHubtelPayments.count > 0 ||
+    summary.hubtelSurplusDuplicatePayments.count > 0 ||
+    summary.hubtelSettlementMismatches.count > 0
   ) {
     return "One or more financial records need review.";
   }
-  if (summary.paystackVerificationLimitations.count > 0) {
-    return "Successful payments, contributions, and receipts are aligned. Some Paystack checks could not be verified.";
+  if (
+    summary.paystackVerificationLimitations.count > 0 ||
+    summary.hubtelVerificationLimitations.count > 0
+  ) {
+    return "Successful payments, contributions, and receipts are aligned. Some provider checks could not be verified.";
   }
   return "All successful payments, contributions, and receipts are aligned.";
 }

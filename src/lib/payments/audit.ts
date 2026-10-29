@@ -8,6 +8,8 @@ export const PaymentAuditAction = {
   PAYMENT_WEBHOOK_OUTCOME: "payment_webhook_outcome",
   /** Durable callback settlement outcome for observability (no secrets). */
   PAYMENT_CALLBACK_OUTCOME: "payment_callback_outcome",
+  /** Durable Hubtel RMSC status lookup outcome (e.g. no_record / 4720). */
+  PAYMENT_HUBTEL_STATUS_LOOKUP: "payment_hubtel_status_lookup",
 } as const;
 
 export type PaymentAuditAction =

@@ -1,6 +1,7 @@
 import { PaymentSettlementError } from "@/lib/payments/paystack-settlement-rules";
 import { resolveExpectedCheckoutAmount } from "@/lib/payments/checkout-amount";
 import type { HubtelVerifiedTransaction } from "@/lib/integrations/hubtel/status";
+import { PaymentStatus } from "@/types/enums";
 import type { SerializedPayment } from "@/types/payment";
 
 const AMOUNT_TOLERANCE = 0.005;
@@ -61,4 +62,45 @@ export function validateHubtelCurrency(
       "Hubtel currency does not match the expected payment currency.",
     );
   }
+}
+
+export type HubtelSettlementMismatchIssue = "reference" | "amount" | "currency";
+
+export type HubtelSettlementMatch =
+  | { consistent: true }
+  | { consistent: false; issue: "status" | HubtelSettlementMismatchIssue };
+
+/**
+ * Read-only application of Hubtel settlement match rules for reconciliation.
+ * Does not write payment records.
+ */
+export function assessHubtelSettlementMatch(
+  payment: Pick<
+    SerializedPayment,
+    "reference" | "amount" | "checkoutAmount" | "currency"
+  >,
+  verification: HubtelVerifiedTransaction,
+): HubtelSettlementMatch {
+  if (verification.status !== PaymentStatus.SUCCESS) {
+    return { consistent: false, issue: "status" };
+  }
+
+  try {
+    validateHubtelReference(payment.reference, verification.clientReference);
+    validateHubtelAmount(payment, verification);
+    validateHubtelCurrency(payment, verification.currency);
+  } catch (error) {
+    if (!(error instanceof PaymentSettlementError)) {
+      throw error;
+    }
+    if (error.message.includes("reference") || error.message.includes("clientReference")) {
+      return { consistent: false, issue: "reference" };
+    }
+    if (error.message.includes("currency")) {
+      return { consistent: false, issue: "currency" };
+    }
+    return { consistent: false, issue: "amount" };
+  }
+
+  return { consistent: true };
 }

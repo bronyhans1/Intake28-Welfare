@@ -5,7 +5,7 @@ import { getCurrentUserFromSession } from "@/lib/auth/session";
 import { isFirebaseAdminConfigured } from "@/lib/firebase/admin";
 import { canRecoverUnsettledPayments } from "@/lib/finance/reconciliation-permissions";
 import {
-  recoverUnsettledPaystackPayment,
+  recoverUnsettledPayment,
   type UnsettledPaymentRecoveryOutcome,
 } from "@/lib/finance/recover-unsettled-payment";
 
@@ -47,7 +47,7 @@ export async function recoverUnsettledPaymentAction(
     };
   }
 
-  const result = await recoverUnsettledPaystackPayment(reference, actor);
+  const result = await recoverUnsettledPayment(reference, actor);
 
   if (result.outcome === "recovered" || result.outcome === "already_settled") {
     revalidatePath("/admin/finance/reconciliation");
