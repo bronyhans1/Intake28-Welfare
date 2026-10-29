@@ -30,8 +30,9 @@ export interface Payment {
    */
   checkoutAmount?: number | null;
   /**
-   * checkoutAmount − amount when a surcharge applies.
-   * Never treated as welfare dues. Phase 1 always persists 0 for new Hubtel inits.
+   * checkoutAmount − amount when a surcharge applies (2% Hubtel processing fee).
+   * Never treated as welfare dues. New Hubtel inits persist the server-calculated fee;
+   * legacy rows may omit this field or store 0 / a prior flat fee.
    */
   processingFeeAmount?: number | null;
   currency: SettingsCurrency;

@@ -76,6 +76,31 @@ describe("member payment UI Hubtel-only boundaries", () => {
     expect(reconciliation).toContain("Unsettled Paystack Successes");
   });
 
+  it("shows a single official Total line and hides fee/checkout from member summaries", () => {
+    const breakdown = readSrc(
+      "components/payments/hubtel-checkout-breakdown.tsx",
+    );
+    const outstanding = readSrc(
+      "components/member/member-outstanding-contributions-payment.tsx",
+    );
+    const memberPayments = readSrc("components/member/member-payments.tsx");
+
+    expect(breakdown).toContain("Total {formatCurrency(amount)}");
+    expect(breakdown).not.toMatch(/Welfare contribution/);
+    expect(breakdown).not.toMatch(/Total payable/);
+    expect(breakdown).not.toMatch(/Processing charge/);
+    expect(breakdown).not.toMatch(/processingFeeAmount/);
+    expect(breakdown).not.toMatch(/formatCurrency\(checkoutAmount\)/);
+    expect(breakdown).not.toMatch(/formatCurrency\(processingFeeAmount\)/);
+
+    expect(outstanding).toContain("You are about to pay");
+    expect(outstanding).toContain("Estimated Progression Update");
+    expect(outstanding).toContain("HubtelCheckoutBreakdown");
+    expect(outstanding).not.toMatch(/Processing charge/);
+    expect(memberPayments).toContain("HubtelCheckoutBreakdown");
+    expect(memberPayments).not.toMatch(/Processing charge/);
+  });
+
   it("preserves receipt download entry points for members", () => {
     const receipts = readSrc("components/member/receipt-download-button.tsx");
     expect(receipts).toContain("download");

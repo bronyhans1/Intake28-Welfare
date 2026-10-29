@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { estimateProgressionAfterPayingMonths } from "@/lib/contributions/arrears-progression-estimate";
 import { monthYearKey, type MonthYear } from "@/lib/finance/period";
+import { HubtelCheckoutBreakdown } from "@/components/payments/hubtel-checkout-breakdown";
 import { formatCurrency } from "@/lib/utils/currency";
 import { cn } from "@/lib/utils";
 import {
@@ -417,6 +418,10 @@ export function MemberOutstandingContributionsPayment({
                 <div className="mt-3">
                   <PaymentDueBadge />
                 </div>
+                <HubtelCheckoutBreakdown
+                  officialAmount={current.amount}
+                  className="mt-4 space-y-1 rounded-xl border border-black/[0.06] bg-white/70 px-3 py-3 text-sm"
+                />
                 <div className="mt-4">
                   <LoadingButton
                     type="button"
@@ -571,9 +576,10 @@ export function MemberOutstandingContributionsPayment({
                           ))}
                         </ul>
                       )}
-                      <p className="mt-3 text-base font-semibold text-foreground">
-                        Total {formatCurrency(totalAmount)}
-                      </p>
+                      <HubtelCheckoutBreakdown
+                        officialAmount={totalAmount}
+                        className="mt-3 space-y-1 text-sm"
+                      />
 
                       <div className="mt-4 border-t border-black/[0.06] pt-3 text-sm">
                         <p className="font-medium text-foreground">
@@ -707,6 +713,12 @@ export function MemberOutstandingContributionsPayment({
                 </Select>
               </div>
             </div>
+            {Number(specialAmount) > 0 ? (
+              <HubtelCheckoutBreakdown
+                officialAmount={Number(specialAmount)}
+                className="space-y-1 rounded-xl border border-black/[0.06] bg-muted/20 px-3 py-3 text-sm"
+              />
+            ) : null}
             <div className="flex flex-wrap gap-2">
               <LoadingButton
                 type="button"

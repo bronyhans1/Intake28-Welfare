@@ -329,7 +329,7 @@ describe("payments repository", () => {
     expect(result.authorizationUrl).toContain("hubtel");
     expect(mockHubtelInitialize).toHaveBeenCalledWith(
       expect.objectContaining({
-        totalAmount: 50,
+        totalAmount: 51,
         description: expect.stringContaining("Monthly dues"),
         clientReference: expect.stringMatching(/^GIS-\d{8}-[A-Z0-9]{6}$/),
         callbackUrl: expect.stringContaining("/api/payments/callback?reference="),
@@ -345,8 +345,8 @@ describe("payments repository", () => {
         provider: PaymentProvider.HUBTEL,
         status: PaymentStatus.PENDING,
         amount: 50,
-        checkoutAmount: 50,
-        processingFeeAmount: 0,
+        checkoutAmount: 51,
+        processingFeeAmount: 1,
       }),
     );
     expect(mockEnsureContributionFromPayment).not.toHaveBeenCalled();
@@ -356,8 +356,8 @@ describe("payments repository", () => {
         entityType: "payment",
         metadata: expect.objectContaining({
           amount: 50,
-          checkoutAmount: 50,
-          processingFeeAmount: 0,
+          checkoutAmount: 51,
+          processingFeeAmount: 1,
           provider: PaymentProvider.HUBTEL,
         }),
       }),
@@ -382,11 +382,13 @@ describe("payments repository", () => {
     );
 
     expect(mockHubtelInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ totalAmount: 50 }),
+      expect.objectContaining({ totalAmount: 51 }),
     );
     expect(mockSet).toHaveBeenCalledWith(
       expect.objectContaining({
         amount: 50,
+        checkoutAmount: 51,
+        processingFeeAmount: 1,
         provider: PaymentProvider.HUBTEL,
       }),
     );
@@ -410,7 +412,7 @@ describe("payments repository", () => {
     );
 
     expect(mockHubtelInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ totalAmount: 50 }),
+      expect.objectContaining({ totalAmount: 51 }),
     );
   });
 
@@ -431,11 +433,11 @@ describe("payments repository", () => {
     );
 
     expect(mockHubtelInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ totalAmount: 50 }),
+      expect.objectContaining({ totalAmount: 51 }),
     );
   });
 
-  it("uses submitted amount for special contributions", async () => {
+  it("uses submitted amount for special contributions and adds the 2% Hubtel processing fee", async () => {
     mockGet.mockResolvedValue({
       exists: true,
       id: "payment-1",
@@ -455,7 +457,14 @@ describe("payments repository", () => {
     );
 
     expect(mockHubtelInitialize).toHaveBeenCalledWith(
-      expect.objectContaining({ totalAmount: 100 }),
+      expect.objectContaining({ totalAmount: 102 }),
+    );
+    expect(mockSet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount: 100,
+        checkoutAmount: 102,
+        processingFeeAmount: 2,
+      }),
     );
   });
 

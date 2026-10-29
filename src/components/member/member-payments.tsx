@@ -12,6 +12,7 @@ import {
   PaymentStatusBadge,
   PaymentTypeBadge,
 } from "@/components/member/payments-badge";
+import { HubtelCheckoutBreakdown } from "@/components/payments/hubtel-checkout-breakdown";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -658,22 +659,30 @@ export function MemberContributionPaymentActions({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
-          <LoadingButton
-            type="button"
-            onClick={handlePayContribution}
-            loading={isSubmitting}
-            loadingText="Redirecting to checkout…"
-            disabled={monthlyDuesBlocked}
-            className="bg-[#166534] text-white hover:bg-[#14532d]"
-          >
-            <CreditCard className="size-4" />
-            Pay Contribution
-          </LoadingButton>
-          <Link href="/payments" className={buttonVariants({ variant: "outline" })}>
-            <History className="size-4" />
-            Payment History
-          </Link>
+        <div className="flex w-full flex-col gap-3 lg:w-auto">
+          {Number(amount) > 0 ? (
+            <HubtelCheckoutBreakdown
+              officialAmount={Number(amount)}
+              className="space-y-1 rounded-xl border border-black/[0.06] bg-muted/20 px-3 py-3 text-sm"
+            />
+          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <LoadingButton
+              type="button"
+              onClick={handlePayContribution}
+              loading={isSubmitting}
+              loadingText="Redirecting to checkout…"
+              disabled={monthlyDuesBlocked}
+              className="bg-[#166534] text-white hover:bg-[#14532d]"
+            >
+              <CreditCard className="size-4" />
+              Pay Contribution
+            </LoadingButton>
+            <Link href="/payments" className={buttonVariants({ variant: "outline" })}>
+              <History className="size-4" />
+              Payment History
+            </Link>
+          </div>
         </div>
       </div>
 

@@ -402,7 +402,7 @@ describe("Hubtel settlement", () => {
     expect(mockClaimSuccess).not.toHaveBeenCalled();
   });
 
-  it("settles when stored checkoutAmount matches verified amount (fixture; fee not enabled)", async () => {
+  it("settles GH₵51 verified Hubtel amount while crediting official GH₵50", async () => {
     const pending = makeHubtelPayment({
       amount: 50,
       checkoutAmount: 51,

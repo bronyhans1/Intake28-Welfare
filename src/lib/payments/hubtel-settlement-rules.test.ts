@@ -40,7 +40,7 @@ describe("hubtel settlement rules", () => {
     ).toThrow(/missing a transaction amount/i);
   });
 
-  it("validates against checkoutAmount when present (fixture only — no live fee)", () => {
+  it("validates against persisted checkoutAmount when present", () => {
     expect(() =>
       validateHubtelAmount({ amount: 50, checkoutAmount: 51 }, { amount: 51 }),
     ).not.toThrow();
