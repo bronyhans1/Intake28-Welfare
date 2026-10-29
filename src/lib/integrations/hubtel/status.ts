@@ -137,6 +137,78 @@ function extractStatusRecord(payload: Record<string, unknown>): Record<string, u
   return asRecord(data);
 }
 
+function jsonValueKind(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  return typeof value;
+}
+
+/**
+ * Safe shape metadata for HTTP-success parse failures.
+ * Never logs body contents, credentials, or Hubtel message text.
+ */
+function buildMissingDataDiagnostics(input: {
+  httpStatus: number;
+  contentType: string | null;
+  parsed: unknown;
+}): Record<string, unknown> {
+  const { httpStatus, contentType, parsed } = input;
+
+  if (parsed === null || typeof parsed !== "object") {
+    return {
+      httpStatus,
+      contentType,
+      payloadType: jsonValueKind(parsed),
+      topLevelKeys: null,
+      dataType: null,
+      dataIsNull: null,
+      dataArrayLength: null,
+      hasResponseCode: false,
+      responseCodeType: null,
+      hasMessage: false,
+      messageType: null,
+    };
+  }
+
+  if (Array.isArray(parsed)) {
+    return {
+      httpStatus,
+      contentType,
+      payloadType: "array",
+      topLevelKeys: null,
+      dataType: null,
+      dataIsNull: null,
+      dataArrayLength: parsed.length,
+      hasResponseCode: false,
+      responseCodeType: null,
+      hasMessage: false,
+      messageType: null,
+    };
+  }
+
+  const payload = parsed as Record<string, unknown>;
+  const data = payload.data;
+  const hasResponseCode = Object.prototype.hasOwnProperty.call(
+    payload,
+    "responseCode",
+  );
+  const hasMessage = Object.prototype.hasOwnProperty.call(payload, "message");
+
+  return {
+    httpStatus,
+    contentType,
+    payloadType: "object",
+    topLevelKeys: Object.keys(payload).sort(),
+    dataType: jsonValueKind(data),
+    dataIsNull: data === null,
+    dataArrayLength: Array.isArray(data) ? data.length : null,
+    hasResponseCode,
+    responseCodeType: hasResponseCode ? jsonValueKind(payload.responseCode) : null,
+    hasMessage,
+    messageType: hasMessage ? jsonValueKind(payload.message) : null,
+  };
+}
+
 function parseStatusPayload(
   payload: Record<string, unknown>,
   requestedReference: string,
@@ -242,9 +314,9 @@ export async function hubtelFetchTransactionStatus(
   }
 
   const responseText = await response.text();
-  let payload: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    payload = JSON.parse(responseText) as Record<string, unknown>;
+    parsed = JSON.parse(responseText) as unknown;
   } catch {
     console.error("[hubtel:status] invalid JSON", {
       clientReference: trimmed,
@@ -257,19 +329,55 @@ export async function hubtelFetchTransactionStatus(
     );
   }
 
+  const contentType = response.headers.get("content-type");
+
   if (!response.ok) {
+    const errorPayload = asRecord(parsed) ?? {};
     console.error("[hubtel:status] http error", {
       clientReference: trimmed,
       httpStatus: response.status,
       responseBody: sanitizeHubtelErrorBody(responseText),
     });
     throw new HubtelStatusRequestError(
-      typeof payload.message === "string"
-        ? payload.message
+      typeof errorPayload.message === "string"
+        ? errorPayload.message
         : "Hubtel status request failed.",
       { retryable: response.status >= 500 || response.status === 429 },
     );
   }
 
-  return parseStatusPayload(payload, trimmed);
+  // HTTP success — reuse the single parsed value; do not re-parse responseText.
+  const payload = asRecord(parsed);
+  if (!payload) {
+    console.error(
+      "[hubtel:status] missing data",
+      buildMissingDataDiagnostics({
+        httpStatus: response.status,
+        contentType,
+        parsed,
+      }),
+    );
+    throw new HubtelStatusRequestError("Hubtel status response is missing data.", {
+      retryable: false,
+    });
+  }
+
+  try {
+    return parseStatusPayload(payload, trimmed);
+  } catch (error) {
+    if (
+      error instanceof HubtelStatusRequestError &&
+      error.message === "Hubtel status response is missing data."
+    ) {
+      console.error(
+        "[hubtel:status] missing data",
+        buildMissingDataDiagnostics({
+          httpStatus: response.status,
+          contentType,
+          parsed,
+        }),
+      );
+    }
+    throw error;
+  }
 }
