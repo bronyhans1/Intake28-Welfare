@@ -1,0 +1,175 @@
+import {
+  compareMonthYear,
+  formatMonthYearLabel,
+  getCurrentMonthYear,
+  isSameMonthYear,
+  monthYearKey,
+  toMonthKeyFromIsoDate,
+  type MonthYear,
+} from "@/lib/finance/period";
+import {
+  getContributionMonths,
+  listAllMemberContributions,
+} from "@/lib/contributions/repository";
+import { getMonthlyDuesAmount } from "@/lib/system-settings/repository";
+import { getMemberById } from "@/lib/members/repository";
+import { ContributionStatus, ContributionType } from "@/types/enums";
+
+export interface OutstandingMonthItem {
+  month: number;
+  year: number;
+  label: string;
+  amount: number;
+  isCurrent: boolean;
+}
+
+export interface MemberOutstandingContributions {
+  membershipStart: MonthYear;
+  currentMonth: MonthYear;
+  monthlyDuesAmount: number;
+  /** Unpaid months before the current month */
+  arrears: OutstandingMonthItem[];
+  /** Current month when still unpaid */
+  current: OutstandingMonthItem | null;
+  /** All unpaid months including current (arrears first, then current) */
+  outstanding: OutstandingMonthItem[];
+}
+
+/** Minimal contribution shape needed to detect paid monthly dues months. */
+export interface PaidMonthlyDuesLookupRecord {
+  contributionType: string;
+  status: string;
+  month: number;
+  year: number;
+}
+
+export interface GetMemberOutstandingContributionsOptions {
+  /** When provided, skips an extra member-scoped contributions fetch. */
+  contributionRecords?: PaidMonthlyDuesLookupRecord[];
+  /** When provided, skips a second system-settings read for dues amount. */
+  monthlyDuesAmount?: number;
+}
+
+/**
+ * Official contribution start month = calendar month the member was added
+ * to the Welfare Scheme (`createdAt`) in Africa/Accra.
+ *
+ * Portal activation (`activatedAt`) is a separate concept and must not
+ * redefine the contribution start month.
+ */
+export function resolveContributionStartMonth(member: {
+  activatedAt?: string | null;
+  createdAt?: string | null;
+}): MonthYear | null {
+  return toMonthKeyFromIsoDate(member.createdAt);
+}
+
+/** Build year-month keys for paid monthly-dues contributions. */
+export function buildPaidMonthlyDuesKeys(
+  records: PaidMonthlyDuesLookupRecord[],
+): Set<string> {
+  const paidKeys = new Set<string>();
+
+  for (const record of records) {
+    if (record.contributionType !== ContributionType.MONTHLY_DUES) continue;
+    if (record.status !== ContributionStatus.PAID) continue;
+    if (!Number.isFinite(record.month) || !Number.isFinite(record.year)) continue;
+    paidKeys.add(monthYearKey({ month: record.month, year: record.year }));
+  }
+
+  return paidKeys;
+}
+
+/**
+ * Pure outstanding-month calculation from membership window + paid dues keys.
+ * Preserves joining-month start, current/open month inclusion, and arrears split.
+ */
+export function computeOutstandingContributionMonths(input: {
+  membershipStart: MonthYear;
+  currentMonth: MonthYear;
+  paidMonthlyDuesKeys: Set<string>;
+  monthlyDuesAmount: number;
+}): MemberOutstandingContributions {
+  const { membershipStart, currentMonth, paidMonthlyDuesKeys, monthlyDuesAmount } =
+    input;
+
+  const rangeStart =
+    compareMonthYear(membershipStart, currentMonth) > 0
+      ? currentMonth
+      : membershipStart;
+
+  const outstanding: OutstandingMonthItem[] = [];
+  for (const period of getContributionMonths(rangeStart, currentMonth)) {
+    if (paidMonthlyDuesKeys.has(monthYearKey(period))) continue;
+
+    outstanding.push({
+      month: period.month,
+      year: period.year,
+      label: formatMonthYearLabel(period),
+      amount: monthlyDuesAmount,
+      isCurrent: isSameMonthYear(period, currentMonth),
+    });
+  }
+
+  const arrears = outstanding.filter((item) => !item.isCurrent);
+  const current = outstanding.find((item) => item.isCurrent) ?? null;
+
+  return {
+    membershipStart,
+    currentMonth,
+    monthlyDuesAmount,
+    arrears,
+    current,
+    outstanding,
+  };
+}
+
+export async function getMemberOutstandingContributions(
+  memberId: string,
+  options: GetMemberOutstandingContributionsOptions = {},
+): Promise<MemberOutstandingContributions> {
+  const member = await getMemberById(memberId);
+  if (!member) {
+    throw new Error("Member not found.");
+  }
+
+  const currentMonth = getCurrentMonthYear();
+  const membershipStart =
+    resolveContributionStartMonth(member) ?? currentMonth;
+
+  const [monthlyDuesAmount, contributionRecords] = await Promise.all([
+    options.monthlyDuesAmount !== undefined
+      ? Promise.resolve(options.monthlyDuesAmount)
+      : getMonthlyDuesAmount(),
+    options.contributionRecords
+      ? Promise.resolve(options.contributionRecords)
+      : listAllMemberContributions(memberId),
+  ]);
+
+  return computeOutstandingContributionMonths({
+    membershipStart,
+    currentMonth,
+    paidMonthlyDuesKeys: buildPaidMonthlyDuesKeys(contributionRecords),
+    monthlyDuesAmount,
+  });
+}
+
+export function assertMonthsWithinContributionWindow(input: {
+  selectedMonths: MonthYear[];
+  membershipStart: MonthYear;
+  currentMonth: MonthYear;
+}): void {
+  for (const period of input.selectedMonths) {
+    if (period.month < 1 || period.month > 12 || !Number.isFinite(period.year)) {
+      throw new Error("Invalid contribution month selected.");
+    }
+    if (compareMonthYear(period, input.membershipStart) < 0) {
+      throw new Error(
+        "You cannot pay for months before you joined the Welfare Scheme.",
+      );
+    }
+    if (compareMonthYear(period, input.currentMonth) > 0) {
+      throw new Error("You cannot pay for future contribution months.");
+    }
+  }
+}

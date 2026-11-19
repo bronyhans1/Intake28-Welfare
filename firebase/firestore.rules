@@ -1,0 +1,67 @@
+rules_version = '2';
+
+/**
+ * Production Firestore security rules — GIS Intake 28 Welfare Portal
+ *
+ * Architecture: nearly all reads/writes use the Admin SDK (bypasses rules).
+ * Client SDK access is limited to a single authenticated get of the caller's
+ * own users/{uid} document (auth session / AuthProvider).
+ *
+ * Default deny. No client writes. No client lists. No client access to
+ * payments, contributions, claims, receipts, announcements, audit_logs,
+ * welfare_support, progression, notification_events, membership_requests,
+ * or any other collection.
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * Authenticated caller may get only their own user document.
+     * list / create / update / delete remain denied (Admin SDK only).
+     */
+    match /users/{userId} {
+      allow get: if request.auth != null && request.auth.uid == userId;
+      allow list, create, update, delete: if false;
+    }
+
+    /**
+     * Explicit denials for sensitive collections (Admin SDK only).
+     * Redundant with the catch-all below; kept for clarity and review.
+     */
+    match /payments/{id} {
+      allow read, write: if false;
+    }
+    match /contributions/{id} {
+      allow read, write: if false;
+    }
+    match /claims/{id} {
+      allow read, write: if false;
+    }
+    match /receipts/{id} {
+      allow read, write: if false;
+    }
+    match /announcements/{id} {
+      allow read, write: if false;
+    }
+    match /audit_logs/{id} {
+      allow read, write: if false;
+    }
+    match /welfare_support/{id} {
+      allow read, write: if false;
+    }
+    match /progression/{id} {
+      allow read, write: if false;
+    }
+    match /notification_events/{id} {
+      allow read, write: if false;
+    }
+    match /membership_requests/{id} {
+      allow read, write: if false;
+    }
+
+    // Everything else: deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
